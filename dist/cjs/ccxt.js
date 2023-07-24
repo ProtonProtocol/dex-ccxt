@@ -106,6 +106,7 @@ var phemex = require('./src/phemex.js');
 var poloniex = require('./src/poloniex.js');
 var poloniexfutures = require('./src/poloniexfutures.js');
 var probit = require('./src/probit.js');
+var protondex = require('./src/protondex.js');
 var tidex = require('./src/tidex.js');
 var timex = require('./src/timex.js');
 var tokocrypto = require('./src/tokocrypto.js');
@@ -178,7 +179,7 @@ var woo$1 = require('./src/pro/woo.js');
 
 //-----------------------------------------------------------------------------
 // this is updated by vss.js when building
-const version = '3.1.56';
+const version = '3.1.57';
 Exchange["default"].ccxtVersion = version;
 const exchanges = {
     'ace': ace,
@@ -275,6 +276,7 @@ const exchanges = {
     'poloniex': poloniex,
     'poloniexfutures': poloniexfutures,
     'probit': probit,
+    'protondex': protondex,
     'tidex': tidex,
     'timex': timex,
     'tokocrypto': tokocrypto,
@@ -481,6 +483,7 @@ exports.phemex = phemex;
 exports.poloniex = poloniex;
 exports.poloniexfutures = poloniexfutures;
 exports.probit = probit;
+exports.protondex = protondex;
 exports.tidex = tidex;
 exports.timex = timex;
 exports.tokocrypto = tokocrypto;

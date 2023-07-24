@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 
-__version__ = '3.1.56'
+__version__ = '3.1.57'
 
 # -----------------------------------------------------------------------------
 
@@ -147,6 +147,7 @@ from ccxt.async_support.phemex import phemex                                    
 from ccxt.async_support.poloniex import poloniex                                # noqa: F401
 from ccxt.async_support.poloniexfutures import poloniexfutures                  # noqa: F401
 from ccxt.async_support.probit import probit                                    # noqa: F401
+from ccxt.async_support.protondex import protondex                              # noqa: F401
 from ccxt.async_support.tidex import tidex                                      # noqa: F401
 from ccxt.async_support.timex import timex                                      # noqa: F401
 from ccxt.async_support.tokocrypto import tokocrypto                            # noqa: F401
@@ -254,6 +255,7 @@ exchanges = [
     'poloniex',
     'poloniexfutures',
     'probit',
+    'protondex',
     'tidex',
     'timex',
     'tokocrypto',

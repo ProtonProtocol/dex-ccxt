@@ -40,7 +40,7 @@ import { BaseError, ExchangeError, PermissionDenied, AccountNotEnabled, AccountS
 //-----------------------------------------------------------------------------
 // this is updated by vss.js when building
 
-const version = '3.1.56';
+const version = '3.1.57';
 
 (Exchange as any).ccxtVersion = version
 
@@ -140,6 +140,7 @@ import phemex from  './src/phemex.js'
 import poloniex from  './src/poloniex.js'
 import poloniexfutures from  './src/poloniexfutures.js'
 import probit from  './src/probit.js'
+import protondex from  './src/protondex.js'
 import tidex from  './src/tidex.js'
 import timex from  './src/timex.js'
 import tokocrypto from  './src/tokocrypto.js'
@@ -308,6 +309,7 @@ const exchanges = {
     'poloniex':               poloniex,
     'poloniexfutures':        poloniexfutures,
     'probit':                 probit,
+    'protondex':              protondex,
     'tidex':                  tidex,
     'timex':                  timex,
     'tokocrypto':             tokocrypto,
@@ -547,6 +549,7 @@ export {
     poloniex,
     poloniexfutures,
     probit,
+    protondex,
     tidex,
     timex,
     tokocrypto,
