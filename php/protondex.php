@@ -1114,9 +1114,9 @@ class protondex extends Exchange {
         $askTokenContract = (string) $market->info.ask_token.contract;
         $quantityText = ($orderSide === 2) ? sprintf('%.' . $bidTokenPrecision . 'f', ($orderAmount) . ' ' . $bidTokenCode) : sprintf('%.' . $askTokenPrecision . 'f', ($orderAmount) . ' ' . $askTokenCode);
         $tokenContract = $orderSide === 2 ? $bidTokenContract : $askTokenContract;
-        $bidMultiplier = ($orderAmount * $this->parse_to_int($market->info.bid_token.multiplier));
-        $askMultiplier = ($orderAmount * $this->parse_to_int($market->info.ask_token.multiplier));
-        $quantity = ($orderSide === 2) ? (string) $bidMultiplier : (string) $askMultiplier;
+        $bidTotal = ($orderAmount * pow(10, sprintf('%.0f', $bidTokenPrecision)));
+        $askTotal = ($orderAmount * pow(10, sprintf('%.0f', $askTokenPrecision)));
+        $quantity = ($orderSide === 2) ? (string) $bidTotal : (string) $askTotal;
         $orderPrice = Number ($price) * Number (pow(10, sprintf('%.0f', $askTokenPrecision)));
         $auth = array( 'actor' => $accountName, 'permission' => 'active' );
         $action1 = array(
@@ -1168,7 +1168,7 @@ class protondex extends Exchange {
             'transaction' => array( $actions ),
         );
         $orderDetails = array();
-        $retries = 5;
+        $retries = 10;
         while ($retries > 0) {
             try {
                 $serResponse = $this->publicPostOrdersSerialize (array_merge($request));
@@ -1209,6 +1209,9 @@ class protondex extends Exchange {
                     if ($message === 'is_canonical( c ) => signature is not canonical') {
                         --$retries;
                     } else {
+                        if ($message === 'assertion failure with $message => overdrawn balance') {
+                            throw new InsufficientFunds('- Add funds to the account');
+                        }
                         $retries = 0;
                     }
                 }
@@ -1257,7 +1260,7 @@ class protondex extends Exchange {
             'transaction' => array( $actions ),
         );
         $data = null;
-        $retries = 5;
+        $retries = 10;
         while ($retries > 0) {
             try {
                 $serResponse = $this->publicPostOrdersSerialize (array_merge($request));
@@ -1352,7 +1355,7 @@ class protondex extends Exchange {
             'transaction' => array( $actions ),
         );
         $data = null;
-        $retries = 5;
+        $retries = 10;
         while ($retries > 0) {
             try {
                 $serResponse = $this->publicPostOrdersSerialize (array_merge($request));

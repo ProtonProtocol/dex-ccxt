@@ -11,6 +11,7 @@ from ccxt.base.types import OrderSide
 from typing import Optional
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import ArgumentsRequired
+from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.decimal_to_precision import TICK_SIZE
 from ccxt.base.precise import Precise
@@ -1054,9 +1055,9 @@ class protondex(Exchange, ImplicitAPI):
         askTokenContract = str(market.info.ask_token.contract)
         quantityText = format((orderAmount, '.' + str(bidTokenPrecision) + 'f') + ' ' + bidTokenCode) if (orderSide == 2) else format((orderAmount, '.' + str(askTokenPrecision) + 'f') + ' ' + askTokenCode)
         tokenContract = orderSide == bidTokenContract if 2 else askTokenContract
-        bidMultiplier = (orderAmount * self.parse_to_int(market.info.bid_token.multiplier))
-        askMultiplier = (orderAmount * self.parse_to_int(market.info.ask_token.multiplier))
-        quantity = str(bidMultiplier) if (orderSide == 2) else str(askMultiplier)
+        bidTotal = (orderAmount * math.pow(10, format(bidTokenPrecision)), '.0f')
+        askTotal = (orderAmount * math.pow(10, format(askTokenPrecision)), '.0f')
+        quantity = str(bidTotal) if (orderSide == 2) else str(askTotal)
         orderPrice = Number(price) * Number(math.pow(10, format(askTokenPrecision), '.0f'))
         auth = {'actor': accountName, 'permission': 'active'}
         action1 = {
@@ -1108,7 +1109,7 @@ class protondex(Exchange, ImplicitAPI):
             'transaction': {actions},
         }
         orderDetails = []
-        retries = 5
+        retries = 10
         while(retries > 0):
             try:
                 serResponse = await self.publicPostOrdersSerialize(self.extend(request))
@@ -1149,6 +1150,8 @@ class protondex(Exchange, ImplicitAPI):
                     if message == 'is_canonical( c ): signature is not canonical':
                         --retries
                     else:
+                        if message == 'assertion failure with message: overdrawn balance':
+                            raise InsufficientFunds('- Add funds to the account')
                         retries = 0
                 if not retries:
                     raise e
@@ -1190,7 +1193,7 @@ class protondex(Exchange, ImplicitAPI):
             'transaction': {actions},
         }
         data = None
-        retries = 5
+        retries = 10
         while(retries > 0):
             try:
                 serResponse = await self.publicPostOrdersSerialize(self.extend(request))
@@ -1271,7 +1274,7 @@ class protondex(Exchange, ImplicitAPI):
             'transaction': {actions},
         }
         data = None
-        retries = 5
+        retries = 10
         while(retries > 0):
             try:
                 serResponse = await self.publicPostOrdersSerialize(self.extend(request))

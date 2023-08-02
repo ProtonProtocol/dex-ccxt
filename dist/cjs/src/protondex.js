@@ -1118,9 +1118,9 @@ class protondex extends protondex$1 {
         const askTokenContract = market.info.ask_token.contract.toString();
         const quantityText = (orderSide === 2) ? (orderAmount.toFixed(bidTokenPrecision) + ' ' + bidTokenCode) : (orderAmount.toFixed(askTokenPrecision) + ' ' + askTokenCode);
         const tokenContract = orderSide === 2 ? bidTokenContract : askTokenContract;
-        const bidMultiplier = (orderAmount * this.parseToInt(market.info.bid_token.multiplier));
-        const askMultiplier = (orderAmount * this.parseToInt(market.info.ask_token.multiplier));
-        const quantity = (orderSide === 2) ? bidMultiplier.toString() : askMultiplier.toString();
+        const bidTotal = (orderAmount * Math.pow(10, bidTokenPrecision)).toFixed(0);
+        const askTotal = (orderAmount * Math.pow(10, askTokenPrecision)).toFixed(0);
+        const quantity = (orderSide === 2) ? bidTotal.toString() : askTotal.toString();
         const orderPrice = Number(price) * Number(Math.pow(10, askTokenPrecision).toFixed(0));
         const auth = { 'actor': accountName, 'permission': 'active' };
         const action1 = {
@@ -1172,7 +1172,7 @@ class protondex extends protondex$1 {
             'transaction': { actions },
         };
         const orderDetails = [];
-        let retries = 5;
+        let retries = 10;
         while (retries > 0) {
             try {
                 const serResponse = await this.publicPostOrdersSerialize(this.extend(request));
@@ -1215,6 +1215,9 @@ class protondex extends protondex$1 {
                         --retries;
                     }
                     else {
+                        if (message === 'assertion failure with message: overdrawn balance') {
+                            throw new errors.InsufficientFunds('- Add funds to the account');
+                        }
                         retries = 0;
                     }
                 }
@@ -1264,7 +1267,7 @@ class protondex extends protondex$1 {
             'transaction': { actions },
         };
         let data = undefined;
-        let retries = 5;
+        let retries = 10;
         while (retries > 0) {
             try {
                 const serResponse = await this.publicPostOrdersSerialize(this.extend(request));
@@ -1362,7 +1365,7 @@ class protondex extends protondex$1 {
             'transaction': { actions },
         };
         let data = undefined;
-        let retries = 5;
+        let retries = 10;
         while (retries > 0) {
             try {
                 const serResponse = await this.publicPostOrdersSerialize(this.extend(request));
