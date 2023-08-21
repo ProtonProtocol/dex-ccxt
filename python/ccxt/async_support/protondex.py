@@ -207,14 +207,16 @@ class protondex(Exchange, ImplicitAPI):
                 'contract': False,
                 'linear': None,
                 'inverse': None,
+                'taker': self.safe_value(market, 'taker_fee'),
+                'maker': self.safe_value(market, 'maker_fee'),
                 'contractSize': None,
                 'expiry': None,
                 'expiryDatetime': None,
                 'strike': None,
                 'optionType': None,
                 'precision': {
-                    'amount': self.parse_number(self.parse_precision(self.safe_string(market, 'size_precision'))),
-                    'price': self.parse_number(self.parse_precision(self.safe_string(market, 'price_precision'))),
+                    'amount': self.parse_number(self.parse_precision(market['bid_token']['precision'])),
+                    'price': self.parse_number(self.parse_precision(market['ask_token']['precision'])),
                 },
                 'limits': {
                     'leverage': {
@@ -346,7 +348,7 @@ class protondex(Exchange, ImplicitAPI):
         request['step'] = params['step'] if (params['step'] is not None) else 100
         response = await self.publicGetOrdersDepth(self.extend(request, params))
         data = self.safe_value(response, 'data', {})
-        return self.parse_order_book(data, market['symbol'], None, 'bids', 'asks', 'bid', 'ask')
+        return self.parse_order_book(data, market['symbol'], None, 'bids', 'asks', 'level', 'bid')
 
     def parse_trade(self, trade, market=None):
         #

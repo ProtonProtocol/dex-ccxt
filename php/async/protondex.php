@@ -206,14 +206,16 @@ class protondex extends Exchange {
                     'contract' => false,
                     'linear' => null,
                     'inverse' => null,
+                    'taker' => $this->safe_value($market, 'taker_fee'),
+                    'maker' => $this->safe_value($market, 'maker_fee'),
                     'contractSize' => null,
                     'expiry' => null,
                     'expiryDatetime' => null,
                     'strike' => null,
                     'optionType' => null,
                     'precision' => array(
-                        'amount' => $this->parse_number($this->parse_precision($this->safe_string($market, 'size_precision'))),
-                        'price' => $this->parse_number($this->parse_precision($this->safe_string($market, 'price_precision'))),
+                        'amount' => $this->parse_number($this->parse_precision($market['bid_token']['precision'])),
+                        'price' => $this->parse_number($this->parse_precision($market['ask_token']['precision'])),
                     ),
                     'limits' => array(
                         'leverage' => array(
@@ -357,7 +359,7 @@ class protondex extends Exchange {
             $request['step'] = ($params['step'] !== null) ? $params['step'] : 100;
             $response = Async\await($this->publicGetOrdersDepth (array_merge($request, $params)));
             $data = $this->safe_value($response, 'data', array());
-            return $this->parse_order_book($data, $market['symbol'], null, 'bids', 'asks', 'bid', 'ask');
+            return $this->parse_order_book($data, $market['symbol'], null, 'bids', 'asks', 'level', 'bid');
         }) ();
     }
 
