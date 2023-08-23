@@ -24,7 +24,7 @@ export default class protondex extends Exchange {
     };
     parseOrderStatus(status: any): string;
     parseOrder(order: any, market?: any): import("./base/types.js").Order;
-    fetchOrder(id: any, symbol?: any, params?: {}): Promise<import("./base/types.js").Order>;
+    fetchOrder(id: string, symbol?: string, params?: {}): Promise<import("./base/types.js").Order>;
     fetchOpenOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<import("./base/types.js").Order[]>;
     fetchDeposits(code?: any, since?: any, limit?: any, params?: {}): Promise<any>;
     fetchWithdrawals(code?: any, since?: any, limit?: any, params?: {}): Promise<any>;

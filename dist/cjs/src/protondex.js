@@ -717,12 +717,17 @@ class protondex extends protondex$1 {
          * @returns {object} An [order structure]{@link https://docs.ccxt.com/en/latest/manual.html#order-structure}
          */
         await this.loadMarkets();
-        const request = {
-            'order_id': id,
-        };
-        if (params['ordinal_order_id'] !== undefined) {
-            request['ordinal_order_id'] = params['ordinal_order_id'];
+        let orderId = 0;
+        let ordinalID = undefined;
+        if (id.length > 15) {
+            ordinalID = id;
         }
+        else {
+            orderId = parseInt(id);
+        }
+        const request = {};
+        request['order_id'] = orderId;
+        request['ordinal_order_id'] = ordinalID;
         const response = await this.publicGetOrdersLifecycle(this.extend(request, params));
         const data = this.safeValue(response, 'data', {});
         return this.parseOrder(data[0]);

@@ -705,7 +705,7 @@ class protondex extends Exchange {
         ), $market);
     }
 
-    public function fetch_order($id, $symbol = null, $params = array ()) {
+    public function fetch_order(string $id, ?string $symbol = null, $params = array ()) {
         /**
          * fetches information on an order made by the user
          * @param {string|null} $symbol unified $symbol of the market the order was made in
@@ -713,12 +713,16 @@ class protondex extends Exchange {
          * @return {array} An {@link https://docs.ccxt.com/en/latest/manual.html#order-structure order structure}
          */
         $this->load_markets();
-        $request = array(
-            'order_id' => $id,
-        );
-        if ($params['ordinal_order_id'] !== null) {
-            $request['ordinal_order_id'] = $params['ordinal_order_id'];
+        $orderId = 0;
+        $ordinalID = null;
+        if (strlen($id) > 15) {
+            $ordinalID = $id;
+        } else {
+            $orderId = intval($id);
         }
+        $request = array( );
+        $request['order_id'] = $orderId;
+        $request['ordinal_order_id'] = $ordinalID;
         $response = $this->publicGetOrdersLifecycle (array_merge($request, $params));
         $data = $this->safe_value($response, 'data', array());
         return $this->parse_order($data[0]);

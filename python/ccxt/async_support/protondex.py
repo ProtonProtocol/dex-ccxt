@@ -683,7 +683,7 @@ class protondex(Exchange, ImplicitAPI):
             'fee': None,
         }, market)
 
-    async def fetch_order(self, id, symbol=None, params={}):
+    async def fetch_order(self, id: str, symbol: Optional[str] = None, params={}):
         """
         fetches information on an order made by the user
         :param str|None symbol: unified symbol of the market the order was made in
@@ -691,11 +691,15 @@ class protondex(Exchange, ImplicitAPI):
         :returns dict: An `order structure <https://docs.ccxt.com/en/latest/manual.html#order-structure>`
         """
         await self.load_markets()
-        request = {
-            'order_id': id,
-        }
-        if params['ordinal_order_id'] is not None:
-            request['ordinal_order_id'] = params['ordinal_order_id']
+        orderId = 0
+        ordinalID = None
+        if len(id) > 15:
+            ordinalID = id
+        else:
+            orderId = int(id)
+        request = {}
+        request['order_id'] = orderId
+        request['ordinal_order_id'] = ordinalID
         response = await self.publicGetOrdersLifecycle(self.extend(request, params))
         data = self.safe_value(response, 'data', {})
         return self.parse_order(data[0])
