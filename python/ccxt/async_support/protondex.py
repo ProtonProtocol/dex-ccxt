@@ -68,6 +68,7 @@ class protondex(Exchange, ImplicitAPI):
                 'fetchOrder': True,
                 'fetchOrderBook': True,
                 'fetchOrders': True,
+                'fetchOrderTrades': True,
                 'fetchPosition': False,
                 'fetchPositionMode': False,
                 'fetchPositions': False,
@@ -88,27 +89,27 @@ class protondex(Exchange, ImplicitAPI):
                 'transfer': False,
                 'withdraw': False,
             },
-            'hostname': 'https://mainnet.api.protondex.com',
+            'hostname': 'https://dex.api.mainnet.metalx.com',
             'urls': {
                 'logo': 'https://protonswap.com/img/logo.svg',
                 'api': {
-                    'rest': 'https://mainnet.api.protondex.com/dex',
-                    'public': 'https://mainnet.api.protondex.com/dex',
-                    'private': 'https://mainnet.api.protondex.com/dex',
+                    'rest': 'https://dex.api.mainnet.metalx.com/dex',
+                    'public': 'https://dex.api.mainnet.metalx.com/dex',
+                    'private': 'https://dex.api.mainnet.metalx.com/dex',
                 },
                 'test': {
-                    'rest': 'https://testnet.api.protondex.com/dex',
-                    'public': 'https://testnet.api.protondex.com/dex',
-                    'private': 'https://testnet.api.protondex.com/dex',
+                    'rest': 'https://dex.api.testnet.metalx.com/dex',
+                    'public': 'https://dex.api.testnet.metalx.com/dex',
+                    'private': 'https://dex.api.testnet.metalx.com/dex',
                 },
-                'www': 'https://protondex.com/',
+                'www': 'https://app.metalx.com/dex/',
                 'doc': [
-                    'https://www.docs.protondex.com',
+                    'https://docs.metalx.com/dex/what-is-metal-x',
                 ],
                 'fees': [
-                    'https://www.docs.protondex.com/dex/what-is-proton-dex/dex-fees-and-discounts',
+                    'https://docs.metalx.com/dex/what-is-metal-x/dex-fees-and-discounts',
                 ],
-                'referral': 'https://protondex.com/',
+                'referral': 'https://app.metalx.com/dex/',
             },
             'api': {
                 'public': {
@@ -383,7 +384,7 @@ class protondex(Exchange, ImplicitAPI):
         orderSide = self.safe_string(trade, 'order_side')
         account = self.safe_string(trade, 'account')
         amountString = account == self.safe_string(trade, 'bid_amount') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_amount')
-        orderId = account == self.safe_string(trade, 'bid_user_order_id') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_user_order_id')
+        orderId = account == self.safe_string(trade, 'bid_user_ordinal_order_id') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_user_ordinal_order_id')
         feeString = account == self.safe_string(trade, 'bid_fee') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_fee')
         feeCurrencyId = account == self.safe_string(market, 'baseId') if self.safe_string(trade, 'bid_user') else self.safe_string(market, 'quoteId')
         fee = None
@@ -393,6 +394,7 @@ class protondex(Exchange, ImplicitAPI):
                 'cost': feeString,
                 'currency': feeCurrencyCode,
             }
+        orderCost = account == self.safe_string(trade, 'ask_amount') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'bid_amount')
         return self.safe_trade({
             'info': trade,
             'id': tradeId,
@@ -405,7 +407,7 @@ class protondex(Exchange, ImplicitAPI):
             'takerOrMaker': None,
             'price': priceString,
             'amount': amountString,
-            'cost': None,
+            'cost': orderCost,
             'fee': fee,
         }, market)
 
@@ -655,7 +657,7 @@ class protondex(Exchange, ImplicitAPI):
         #     }
         #
         marketId = self.safe_string(order, 'market')
-        symbol = self.safe_symbol(marketId, market, '-')
+        market = self.safe_market(marketId, market, '-')
         timestamp = self.parse8601(self.safe_string(order, 'block_time'))
         priceString = self.safe_string(order, 'price')
         amountString = self.safe_string(order, 'quantity_init')
@@ -666,13 +668,19 @@ class protondex(Exchange, ImplicitAPI):
             parts = type.split('_')
             type = parts[0]
         side = self.safe_string(order, 'order_side')
+        currency = market.quote if (side == '2') else market.base
+        fee = {
+            'cost': self.safe_string(market, 'maker'),
+            'currency': currency,
+        }
+        market['inverse'] = True
         return self.safe_order({
             'id': self.safe_string(order, 'order_id'),
             'clientOrderId': self.safe_string(order, 'ordinal_order_id'),
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
             'status': status,
-            'symbol': symbol,
+            'symbol': market['symbol'],
             'type': type,
             'side': side,
             'price': priceString,
@@ -680,7 +688,7 @@ class protondex(Exchange, ImplicitAPI):
             'cost': None,
             'amount': amountString,
             'remaining': remainingString,
-            'fee': None,
+            'fee': fee,
         }, market)
 
     async def fetch_order(self, id: str, symbol: Optional[str] = None, params={}):
@@ -703,6 +711,58 @@ class protondex(Exchange, ImplicitAPI):
         response = await self.publicGetOrdersLifecycle(self.extend(request, params))
         data = self.safe_value(response, 'data', {})
         return self.parse_order(data[0])
+
+    async def fetch_order_trades(self, id: str, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
+        """
+        fetch the trade
+        :param str id: order id
+        :param str|None symbol: unified market symbol
+        :param int|None since: the earliest time in ms to fetch trades for
+        :param int|None limit: the maximum number of trades to retrieve
+        :param dict params: extra parameters specific to the poloniex api endpoint
+        :returns [dict]: a list of `trade structures <https://docs.ccxt.com/#/?id=trade-structure>`
+        """
+        await self.load_markets()
+        if params['account'] is None:
+            raise ArgumentsRequired(self.id + ' fetchOrderTrades() requires a account argument in params')
+        market = self.market(symbol)
+        request = {
+            'account': params['account'],
+            'symbol': market['symbol'],
+            'ordinal_order_ids': [id],
+        }
+        response = await self.publicGetTradesHistory(self.extend(request, params))
+        #
+        #     [
+        #         {
+        #             "block_num": "215336694",
+        #             "block_time": "2023-09-21T17:54:49.500Z",
+        #             "trade_id": "3892445",
+        #             "market_id": "1",
+        #             "price": "0.000612",
+        #             "bid_user": "metallicus",
+        #             "bid_user_order_id": "7259690",
+        #             "bid_user_ordinal_order_id": 719415c560eab4854d581ca710634669689676518841983011f7721498e85154,
+        #             "bid_total": 1764.7058,
+        #             "bid_amount": 1762.9411,
+        #             "bid_fee": 1.7647,
+        #             "bid_referrer": "",
+        #             "bid_referrer_fee": 0,
+        #             "ask_user": "otctest",
+        #             "ask_user_order_id": "7259952",
+        #             "ask_user_ordinal_order_id": 1a13fd86ddc3facb2c87bbfb39ce243bebe2c20cf1963ddbcf2a12f05aa44572,
+        #             "ask_total": 1.08,
+        #             "ask_amount": 1.08,
+        #             "ask_fee": 0,
+        #             "ask_referrer": "",
+        #             "ask_referrer_fee": 0,
+        #             "order_side": 1,
+        #             "trx_id": 8e135c1e82176d8780c5ef9cbef31a7051dcb0b157b9011e18597770d09c7cee,
+        #         }
+        #     ]
+        #
+        data = self.safe_value(response, 'data', [])
+        return self.parse_trades(data, market, 1, 1, {'account': params['account']})
 
     async def fetch_open_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
@@ -1051,7 +1111,7 @@ class protondex(Exchange, ImplicitAPI):
         orderSide = int(side)
         orderFillType = self.safe_value(params, 'filltype')
         orderAmount = amount
-        triggerPrice = self.safe_value(params, 'triggerprice')
+        triggerPrice = (self.safe_value(params, 'triggerprice') is not self.safe_value(params, 'triggerprice') if None) else 0
         referrerName = params['referrer'] if (params['referrer'] is not None) else ''
         bidTokenPrecision = self.parse_to_int(market.info.bid_token.precision)
         askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
@@ -1065,6 +1125,8 @@ class protondex(Exchange, ImplicitAPI):
         askTotal = (orderAmount * math.pow(10, format(askTokenPrecision)), '.0f')
         quantity = str(bidTotal) if (orderSide == 2) else str(askTotal)
         orderPrice = Number(price) * Number(math.pow(10, format(askTokenPrecision), '.0f'))
+        if (orderSide == 2 and orderFillType == 1 and price == 1) or (orderSide == 1 and orderFillType == 1 and price == '9223372036854775806'):
+            orderPrice = price
         auth = {'actor': accountName, 'permission': 'active'}
         action1 = {
             'account': tokenContract,

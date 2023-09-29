@@ -59,6 +59,7 @@ class protondex extends Exchange {
                 'fetchOrder' => true,
                 'fetchOrderBook' => true,
                 'fetchOrders' => true,
+                'fetchOrderTrades' => true,
                 'fetchPosition' => false,
                 'fetchPositionMode' => false,
                 'fetchPositions' => false,
@@ -79,27 +80,27 @@ class protondex extends Exchange {
                 'transfer' => false,
                 'withdraw' => false,
             ),
-            'hostname' => 'https://mainnet.api.protondex.com',
+            'hostname' => 'https://dex.api.mainnet.metalx.com',
             'urls' => array(
                 'logo' => 'https://protonswap.com/img/logo.svg',
                 'api' => array(
-                    'rest' => 'https://mainnet.api.protondex.com/dex',
-                    'public' => 'https://mainnet.api.protondex.com/dex',
-                    'private' => 'https://mainnet.api.protondex.com/dex',
+                    'rest' => 'https://dex.api.mainnet.metalx.com/dex',
+                    'public' => 'https://dex.api.mainnet.metalx.com/dex',
+                    'private' => 'https://dex.api.mainnet.metalx.com/dex',
                 ),
                 'test' => array(
-                    'rest' => 'https://testnet.api.protondex.com/dex',
-                    'public' => 'https://testnet.api.protondex.com/dex',
-                    'private' => 'https://testnet.api.protondex.com/dex',
+                    'rest' => 'https://dex.api.testnet.metalx.com/dex',
+                    'public' => 'https://dex.api.testnet.metalx.com/dex',
+                    'private' => 'https://dex.api.testnet.metalx.com/dex',
                 ),
-                'www' => 'https://protondex.com/',
+                'www' => 'https://app.metalx.com/dex/',
                 'doc' => array(
-                    'https://www.docs.protondex.com',
+                    'https://docs.metalx.com/dex/what-is-metal-x',
                 ),
                 'fees' => array(
-                    'https://www.docs.protondex.com/dex/what-is-proton-dex/dex-fees-and-discounts',
+                    'https://docs.metalx.com/dex/what-is-metal-x/dex-fees-and-discounts',
                 ),
-                'referral' => 'https://protondex.com/',
+                'referral' => 'https://app.metalx.com/dex/',
             ),
             'api' => array(
                 'public' => array(
@@ -382,7 +383,7 @@ class protondex extends Exchange {
         $orderSide = $this->safe_string($trade, 'order_side');
         $account = $this->safe_string($trade, 'account');
         $amountString = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_amount') : $this->safe_string($trade, 'ask_amount');
-        $orderId = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_user_order_id') : $this->safe_string($trade, 'ask_user_order_id');
+        $orderId = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_user_ordinal_order_id') : $this->safe_string($trade, 'ask_user_ordinal_order_id');
         $feeString = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_fee') : $this->safe_string($trade, 'ask_fee');
         $feeCurrencyId = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($market, 'baseId') : $this->safe_string($market, 'quoteId');
         $fee = null;
@@ -393,6 +394,7 @@ class protondex extends Exchange {
                 'currency' => $feeCurrencyCode,
             );
         }
+        $orderCost = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'ask_amount') : $this->safe_string($trade, 'bid_amount');
         return $this->safe_trade(array(
             'info' => $trade,
             'id' => $tradeId,
@@ -405,7 +407,7 @@ class protondex extends Exchange {
             'takerOrMaker' => null,
             'price' => $priceString,
             'amount' => $amountString,
-            'cost' => null,
+            'cost' => $orderCost,
             'fee' => $fee,
         ), $market);
     }
@@ -675,7 +677,7 @@ class protondex extends Exchange {
         //     }
         //
         $marketId = $this->safe_string($order, 'market');
-        $symbol = $this->safe_symbol($marketId, $market, '-');
+        $market = $this->safe_market($marketId, $market, '-');
         $timestamp = $this->parse8601($this->safe_string($order, 'block_time'));
         $priceString = $this->safe_string($order, 'price');
         $amountString = $this->safe_string($order, 'quantity_init');
@@ -687,13 +689,19 @@ class protondex extends Exchange {
             $type = $parts[0];
         }
         $side = $this->safe_string($order, 'order_side');
+        $currency = ($side === '2') ? $market->quote : $market->base;
+        $fee = array(
+            'cost' => $this->safe_string($market, 'maker'),
+            'currency' => $currency,
+        );
+        $market['inverse'] = true;
         return $this->safe_order(array(
             'id' => $this->safe_string($order, 'order_id'),
             'clientOrderId' => $this->safe_string($order, 'ordinal_order_id'),
             'datetime' => $this->iso8601($timestamp),
             'timestamp' => $timestamp,
             'status' => $status,
-            'symbol' => $symbol,
+            'symbol' => $market['symbol'],
             'type' => $type,
             'side' => $side,
             'price' => $priceString,
@@ -701,7 +709,7 @@ class protondex extends Exchange {
             'cost' => null,
             'amount' => $amountString,
             'remaining' => $remainingString,
-            'fee' => null,
+            'fee' => $fee,
         ), $market);
     }
 
@@ -726,6 +734,60 @@ class protondex extends Exchange {
         $response = $this->publicGetOrdersLifecycle (array_merge($request, $params));
         $data = $this->safe_value($response, 'data', array());
         return $this->parse_order($data[0]);
+    }
+
+    public function fetch_order_trades(string $id, ?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
+        /**
+         * fetch the trade
+         * @param {string} $id order $id
+         * @param {string|null} $symbol unified $market $symbol
+         * @param {int|null} $since the earliest time in ms to fetch trades for
+         * @param {int|null} $limit the maximum number of trades to retrieve
+         * @param {array} $params extra parameters specific to the poloniex api endpoint
+         * @return {[array]} a list of ~@link https://docs.ccxt.com/#/?$id=trade-structure trade structures~
+         */
+        $this->load_markets();
+        if ($params['account'] === null) {
+            throw new ArgumentsRequired($this->id . ' fetchOrderTrades() requires a account argument in params');
+        }
+        $market = $this->market($symbol);
+        $request = array(
+            'account' => $params['account'],
+            'symbol' => $market['symbol'],
+            'ordinal_order_ids' => array( $id ),
+        );
+        $response = $this->publicGetTradesHistory (array_merge($request, $params));
+        //
+        //     array(
+        //         {
+        //             "block_num" => "215336694",
+        //             "block_time" => "2023-09-21T17:54:49.500Z",
+        //             "trade_id" => "3892445",
+        //             "market_id" => "1",
+        //             "price" => "0.000612",
+        //             "bid_user" => "metallicus",
+        //             "bid_user_order_id" => "7259690",
+        //             "bid_user_ordinal_order_id" => 719415c560eab4854d581ca710634669689676518841983011f7721498e85154,
+        //             "bid_total" => 1764.7058,
+        //             "bid_amount" => 1762.9411,
+        //             "bid_fee" => 1.7647,
+        //             "bid_referrer" => "",
+        //             "bid_referrer_fee" => 0,
+        //             "ask_user" => "otctest",
+        //             "ask_user_order_id" => "7259952",
+        //             "ask_user_ordinal_order_id" => 1a13fd86ddc3facb2c87bbfb39ce243bebe2c20cf1963ddbcf2a12f05aa44572,
+        //             "ask_total" => 1.08,
+        //             "ask_amount" => 1.08,
+        //             "ask_fee" => 0,
+        //             "ask_referrer" => "",
+        //             "ask_referrer_fee" => 0,
+        //             "order_side" => 1,
+        //             "trx_id" => 8e135c1e82176d8780c5ef9cbef31a7051dcb0b157b9011e18597770d09c7cee,
+        //         }
+        //     )
+        //
+        $data = $this->safe_value($response, 'data', array());
+        return $this->parse_trades($data, $market, 1, 1, array( 'account' => $params['account'] ));
     }
 
     public function fetch_open_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
@@ -1110,7 +1172,7 @@ class protondex extends Exchange {
         $orderSide = intval($side);
         $orderFillType = $this->safe_value($params, 'filltype');
         $orderAmount = $amount;
-        $triggerPrice = $this->safe_value($params, 'triggerprice');
+        $triggerPrice = ($this->safe_value($params, 'triggerprice') !== null) ? $this->safe_value($params, 'triggerprice') : 0;
         $referrerName = ($params['referrer'] !== null) ? $params['referrer'] : '';
         $bidTokenPrecision = $this->parse_to_int($market->info.bid_token.precision);
         $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
@@ -1124,6 +1186,9 @@ class protondex extends Exchange {
         $askTotal = ($orderAmount * pow(10, sprintf('%.0f', $askTokenPrecision)));
         $quantity = ($orderSide === 2) ? (string) $bidTotal : (string) $askTotal;
         $orderPrice = Number ($price) * Number (pow(10, sprintf('%.0f', $askTokenPrecision)));
+        if (($orderSide === 2 && $orderFillType === 1 && $price === 1) || ($orderSide === 1 && $orderFillType === 1 && $price === '9223372036854775806')) {
+            $orderPrice = $price;
+        }
         $auth = array( 'actor' => $accountName, 'permission' => 'active' );
         $action1 = array(
             'account' => $tokenContract,
