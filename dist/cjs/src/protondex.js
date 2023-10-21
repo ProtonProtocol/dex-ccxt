@@ -385,7 +385,7 @@ class protondex extends protondex$1 {
         const priceString = this.safeString(trade, 'price');
         const orderSide = this.safeString(trade, 'order_side');
         const account = this.safeString(trade, 'account');
-        const amountString = account === this.safeString(trade, 'bid_user') ? this.safeString(trade, 'bid_amount') : this.safeString(trade, 'ask_amount');
+        const amountString = this.safeString(trade, 'bid_amount');
         const orderId = account === this.safeString(trade, 'bid_user') ? this.safeString(trade, 'bid_user_ordinal_order_id') : this.safeString(trade, 'ask_user_ordinal_order_id');
         const feeString = account === this.safeString(trade, 'bid_user') ? this.safeString(trade, 'bid_fee') : this.safeString(trade, 'ask_fee');
         const feeCurrencyId = account === this.safeString(trade, 'bid_user') ? this.safeString(market, 'baseId') : this.safeString(market, 'quoteId');
@@ -397,7 +397,7 @@ class protondex extends protondex$1 {
                 'currency': feeCurrencyCode,
             };
         }
-        const orderCost = account === this.safeString(trade, 'bid_user') ? this.safeString(trade, 'ask_amount') : this.safeString(trade, 'bid_amount');
+        const orderCost = this.safeString(trade, 'ask_amount');
         return this.safeTrade({
             'info': trade,
             'id': tradeId,
@@ -654,6 +654,7 @@ class protondex extends protondex$1 {
     parseOrderStatus(status) {
         const statuses = {
             'fulfilled': 'closed',
+            'delete': 'closed',
             'canceled': 'canceled',
             'pending': 'open',
             'open': 'open',
@@ -679,12 +680,12 @@ class protondex extends protondex$1 {
         //         "created_at":"2018-01-12T21:14:06.747828Z"
         //     }
         //
-        const marketId = this.safeString(order, 'market');
-        market = this.safeMarket(marketId, market, '-');
         const timestamp = this.parse8601(this.safeString(order, 'block_time'));
         const priceString = this.safeString(order, 'price');
-        const amountString = this.safeString(order, 'quantity_init');
-        const remainingString = this.safeString(order, 'quantity_curr');
+        const symbol = this.safeString(market, 'symbol', undefined);
+        let amountString = this.safeString(order, 'quantity_init');
+        let remainingString = this.safeString(order, 'quantity_curr');
+        const costString = this.safeString(order, 'cost');
         const status = this.parseOrderStatus(this.safeString(order, 'status'));
         let type = this.safeString(order, 'order_type');
         if (type !== undefined) {
@@ -692,26 +693,28 @@ class protondex extends protondex$1 {
             type = parts[0];
         }
         const side = this.safeString(order, 'order_side');
-        const currency = (side === '2') ? market.quote : market.base;
-        const fee = {
-            'cost': this.safeString(market, 'maker'),
-            'currency': currency,
-        };
-        market['inverse'] = true;
+        if (side === '1' && status === 'closed' && symbol !== undefined) {
+            const precision = this.parseToInt(market.info.bid_token.precision);
+            amountString = parseFloat(Precise["default"].stringDiv(amountString, this.safeString(order, 'avgPrice'))).toFixed(precision);
+            remainingString = parseFloat(Precise["default"].stringDiv(remainingString, this.safeString(order, 'avgPrice'))).toFixed(precision);
+        }
+        const fee = this.safeValue(order, 'fee');
         return this.safeOrder({
             'id': this.safeString(order, 'order_id'),
             'clientOrderId': this.safeString(order, 'ordinal_order_id'),
             'datetime': this.iso8601(timestamp),
             'timestamp': timestamp,
             'status': status,
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'type': type,
             'side': side,
             'price': priceString,
             'stopPrice': this.safeString(order, 'trigger_price'),
-            'cost': undefined,
+            'cost': costString,
             'amount': amountString,
             'remaining': remainingString,
+            'lastTradeTimestamp': timestamp,
+            'average': this.safeString(order, 'avgPrice'),
             'fee': fee,
         }, market);
     }
@@ -738,7 +741,38 @@ class protondex extends protondex$1 {
         request['ordinal_order_id'] = ordinalID;
         const response = await this.publicGetOrdersLifecycle(this.extend(request, params));
         const data = this.safeValue(response, 'data', {});
-        return this.parseOrder(data[0]);
+        let avgPrice = 0.0;
+        let feeCost = undefined;
+        const fee = {};
+        let market = undefined;
+        if (ordinalID !== undefined) {
+            const ordinalId = this.safeString(data[0], 'ordinal_order_id');
+            const account = this.safeString(data[0], 'account_name');
+            const marketid = this.safeString(data[0], 'market_id');
+            const markets = await this.fetchMarkets();
+            let markSymbol = undefined;
+            for (let i = 0; i < markets.length; i++) {
+                if (markets[i].info.market_id === marketid) {
+                    markSymbol = this.safeString(markets[i], 'symbol');
+                    market = markets[i];
+                }
+            }
+            let currency = undefined;
+            const trades = await this.fetchOrderTrades(ordinalId, markSymbol, 1, 1, { 'account': account });
+            for (let j = 0; j < trades.length; j++) {
+                avgPrice += this.safeFloat(trades[j], 'price');
+                feeCost = Precise["default"].stringAdd(feeCost, this.safeString(trades[j]['fee'], 'cost'));
+                currency = this.safeString(trades[j]['fee'], 'currency');
+            }
+            if (trades.length !== 0) {
+                avgPrice = parseFloat((avgPrice / trades.length).toString());
+            }
+            fee['cost'] = feeCost;
+            fee['currency'] = currency;
+        }
+        data[0]['avgPrice'] = avgPrice.toFixed(8);
+        data[0]['fee'] = fee;
+        return this.parseOrder(data[0], market);
     }
     async fetchOrderTrades(id, symbol = undefined, since = undefined, limit = undefined, params = {}) {
         /**
@@ -1192,8 +1226,10 @@ class protondex extends protondex$1 {
         const askTotal = (orderAmount * Math.pow(10, askTokenPrecision)).toFixed(0);
         const quantity = (orderSide === 2) ? bidTotal.toString() : askTotal.toString();
         let orderPrice = Number(price) * Number(Math.pow(10, askTokenPrecision).toFixed(0));
+        let marketOrder = 0;
         if ((orderSide === 2 && orderFillType === 1 && price === 1) || (orderSide === 1 && orderFillType === 1 && price === '9223372036854775806')) {
             orderPrice = price;
+            marketOrder = 1;
         }
         const auth = { 'actor': accountName, 'permission': 'active' };
         const action1 = {
@@ -1279,6 +1315,21 @@ class protondex extends protondex$1 {
                 orderDetails['order_side'] = orderSide;
                 orderDetails['price'] = orderPrice;
                 orderDetails['trigger_price'] = triggerPrice;
+                if (marketOrder === 1) {
+                    if (orderSide === 2) {
+                        orderDetails['cost'] = 0;
+                    }
+                    orderDetails['price'] = price;
+                }
+                else {
+                    if (orderSide === 2) {
+                        orderDetails['cost'] = ((orderAmount * orderDetails['price']) / Math.pow(10, askTokenPrecision));
+                    }
+                    else {
+                        orderDetails['cost'] = orderAmount;
+                    }
+                }
+                orderDetails['price'] = (orderDetails['price'] / Math.pow(10, askTokenPrecision));
                 retries = 0;
             }
             catch (e) {

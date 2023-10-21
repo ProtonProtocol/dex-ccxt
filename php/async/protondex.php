@@ -396,7 +396,7 @@ class protondex extends Exchange {
         $priceString = $this->safe_string($trade, 'price');
         $orderSide = $this->safe_string($trade, 'order_side');
         $account = $this->safe_string($trade, 'account');
-        $amountString = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_amount') : $this->safe_string($trade, 'ask_amount');
+        $amountString = $this->safe_string($trade, 'bid_amount');
         $orderId = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_user_ordinal_order_id') : $this->safe_string($trade, 'ask_user_ordinal_order_id');
         $feeString = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'bid_fee') : $this->safe_string($trade, 'ask_fee');
         $feeCurrencyId = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($market, 'baseId') : $this->safe_string($market, 'quoteId');
@@ -408,7 +408,7 @@ class protondex extends Exchange {
                 'currency' => $feeCurrencyCode,
             );
         }
-        $orderCost = $account === $this->safe_string($trade, 'bid_user') ? $this->safe_string($trade, 'ask_amount') : $this->safe_string($trade, 'bid_amount');
+        $orderCost = $this->safe_string($trade, 'ask_amount');
         return $this->safe_trade(array(
             'info' => $trade,
             'id' => $tradeId,
@@ -674,6 +674,7 @@ class protondex extends Exchange {
     public function parse_order_status($status) {
         $statuses = array(
             'fulfilled' => 'closed',
+            'delete' => 'closed',
             'canceled' => 'canceled',
             'pending' => 'open',
             'open' => 'open',
@@ -700,12 +701,12 @@ class protondex extends Exchange {
         //         "created_at":"2018-01-12T21:14:06.747828Z"
         //     }
         //
-        $marketId = $this->safe_string($order, 'market');
-        $market = $this->safe_market($marketId, $market, '-');
         $timestamp = $this->parse8601($this->safe_string($order, 'block_time'));
         $priceString = $this->safe_string($order, 'price');
+        $symbol = $this->safe_string($market, 'symbol', null);
         $amountString = $this->safe_string($order, 'quantity_init');
         $remainingString = $this->safe_string($order, 'quantity_curr');
+        $costString = $this->safe_string($order, 'cost');
         $status = $this->parse_order_status($this->safe_string($order, 'status'));
         $type = $this->safe_string($order, 'order_type');
         if ($type !== null) {
@@ -713,26 +714,28 @@ class protondex extends Exchange {
             $type = $parts[0];
         }
         $side = $this->safe_string($order, 'order_side');
-        $currency = ($side === '2') ? $market->quote : $market->base;
-        $fee = array(
-            'cost' => $this->safe_string($market, 'maker'),
-            'currency' => $currency,
-        );
-        $market['inverse'] = true;
+        if ($side === '1' && $status === 'closed' && $symbol !== null) {
+            $precision = $this->parse_to_int($market->info.bid_token.precision);
+            $amountString = floatval(Precise::string_div($amountString, $this->safe_string($order, sprintf('%.' . $precision . 'f', 'avgPrice'))));
+            $remainingString = floatval(Precise::string_div($remainingString, $this->safe_string($order, sprintf('%.' . $precision . 'f', 'avgPrice'))));
+        }
+        $fee = $this->safe_value($order, 'fee');
         return $this->safe_order(array(
             'id' => $this->safe_string($order, 'order_id'),
             'clientOrderId' => $this->safe_string($order, 'ordinal_order_id'),
             'datetime' => $this->iso8601($timestamp),
             'timestamp' => $timestamp,
             'status' => $status,
-            'symbol' => $market['symbol'],
+            'symbol' => $symbol,
             'type' => $type,
             'side' => $side,
             'price' => $priceString,
             'stopPrice' => $this->safe_string($order, 'trigger_price'),
-            'cost' => null,
+            'cost' => $costString,
             'amount' => $amountString,
             'remaining' => $remainingString,
+            'lastTradeTimestamp' => $timestamp,
+            'average' => $this->safe_string($order, 'avgPrice'),
             'fee' => $fee,
         ), $market);
     }
@@ -741,7 +744,7 @@ class protondex extends Exchange {
         return Async\async(function () use ($id, $symbol, $params) {
             /**
              * fetches information on an order made by the user
-             * @param {string|null} $symbol unified $symbol of the market the order was made in
+             * @param {string|null} $symbol unified $symbol of the $market the order was made in
              * @param {array} $params extra parameters specific to the protondex api endpoint
              * @return {array} An {@link https://docs.ccxt.com/en/latest/manual.html#order-structure order structure}
              */
@@ -758,7 +761,38 @@ class protondex extends Exchange {
             $request['ordinal_order_id'] = $ordinalID;
             $response = Async\await($this->publicGetOrdersLifecycle (array_merge($request, $params)));
             $data = $this->safe_value($response, 'data', array());
-            return $this->parse_order($data[0]);
+            $avgPrice = 0.0;
+            $feeCost = null;
+            $fee = array();
+            $market = null;
+            if ($ordinalID !== null) {
+                $ordinalId = $this->safe_string($data[0], 'ordinal_order_id');
+                $account = $this->safe_string($data[0], 'account_name');
+                $marketid = $this->safe_string($data[0], 'market_id');
+                $markets = Async\await($this->fetch_markets());
+                $markSymbol = null;
+                for ($i = 0; $i < count($markets); $i++) {
+                    if ($markets[$i].info.market_id === $marketid) {
+                        $markSymbol = $this->safe_string($markets[$i], 'symbol');
+                        $market = $markets[$i];
+                    }
+                }
+                $currency = null;
+                $trades = Async\await($this->fetch_order_trades($ordinalId, $markSymbol, 1, 1, array( 'account' => $account )));
+                for ($j = 0; $j < count($trades); $j++) {
+                    $avgPrice .= $this->safe_float($trades[$j], 'price');
+                    $feeCost = Precise::string_add($feeCost, $this->safe_string($trades[$j]['fee'], 'cost'));
+                    $currency = $this->safe_string($trades[$j]['fee'], 'currency');
+                }
+                if (strlen($trades) !== 0) {
+                    $avgPrice = floatval(($avgPrice / (string) strlen($trades)));
+                }
+                $fee['cost'] = $feeCost;
+                $fee['currency'] = $currency;
+            }
+            $data[0]['avgPrice'] = sprintf('%.8f', $avgPrice);
+            $data[0]['fee'] = $fee;
+            return $this->parse_order($data[0], $market);
         }) ();
     }
 
@@ -1225,8 +1259,10 @@ class protondex extends Exchange {
             $askTotal = ($orderAmount * pow(10, sprintf('%.0f', $askTokenPrecision)));
             $quantity = ($orderSide === 2) ? (string) $bidTotal : (string) $askTotal;
             $orderPrice = Number ($price) * Number (pow(10, sprintf('%.0f', $askTokenPrecision)));
+            $marketOrder = 0;
             if (($orderSide === 2 && $orderFillType === 1 && $price === 1) || ($orderSide === 1 && $orderFillType === 1 && $price === '9223372036854775806')) {
                 $orderPrice = $price;
+                $marketOrder = 1;
             }
             $auth = array( 'actor' => $accountName, 'permission' => 'active' );
             $action1 = array(
@@ -1312,6 +1348,19 @@ class protondex extends Exchange {
                     $orderDetails['order_side'] = $orderSide;
                     $orderDetails['price'] = $orderPrice;
                     $orderDetails['trigger_price'] = $triggerPrice;
+                    if ($marketOrder === 1) {
+                        if ($orderSide === 2) {
+                            $orderDetails['cost'] = 0;
+                        }
+                        $orderDetails['price'] = $price;
+                    } else {
+                        if ($orderSide === 2) {
+                            $orderDetails['cost'] = (($orderAmount * $orderDetails['price']) / pow(10, $askTokenPrecision));
+                        } else {
+                            $orderDetails['cost'] = $orderAmount;
+                        }
+                    }
+                    $orderDetails['price'] = ($orderDetails['price'] / pow(10, $askTokenPrecision));
                     $retries = 0;
                 } catch (Exception $e) {
                     if ($this->last_json_response) {

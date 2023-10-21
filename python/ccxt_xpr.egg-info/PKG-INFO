@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: ccxt-xpr
-Version: 3.1.60
+Version: 3.1.62
 Summary: A JavaScript / TypeScript / Python / C# / PHP cryptocurrency trading library with support for 130+ exchanges
 Home-page: https://ccxt.com
 Author: Igor Kroitor
@@ -31,8 +31,16 @@ Classifier: Programming Language :: PHP
 Classifier: Operating System :: OS Independent
 Classifier: Environment :: Console
 Description-Content-Type: text/markdown
-Provides-Extra: qa
 License-File: LICENSE.txt
+Requires-Dist: setuptools>=60.9.0
+Requires-Dist: certifi>=2018.1.18
+Requires-Dist: requests>=2.18.4
+Requires-Dist: cryptography>=2.6.1
+Requires-Dist: aiohttp>=3.8; python_version >= "3.5.2"
+Requires-Dist: aiodns>=1.1.1; python_version >= "3.5.2"
+Requires-Dist: yarl>=1.7.2; python_version >= "3.5.2"
+Provides-Extra: qa
+Requires-Dist: flake8==3.7.9; extra == "qa"
 
 # CCXT – CryptoCurrency eXchange Trading Library
 
@@ -247,13 +255,13 @@ console.log(version, Object.keys(exchanges));
 
 All-in-one browser bundle (dependencies included), served from a CDN of your choice:
 
-* jsDelivr: https://cdn.jsdelivr.net/npm/ccxt@3.1.60/dist/ccxt.browser.js
-* unpkg: https://unpkg.com/ccxt@3.1.60/dist/ccxt.browser.js
+* jsDelivr: https://cdn.jsdelivr.net/npm/ccxt@3.1.62/dist/ccxt.browser.js
+* unpkg: https://unpkg.com/ccxt@3.1.62/dist/ccxt.browser.js
 
 CDNs are not updated in real-time and may have delays. Defaulting to the most recent version without specifying the version number is not recommended. Please, keep in mind that we are not responsible for the correct operation of those CDN servers.
 
 ```HTML
-<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/ccxt@3.1.60/dist/ccxt.browser.js"></script>
+<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/ccxt@3.1.62/dist/ccxt.browser.js"></script>
 ```
 
 Creates a global `ccxt` object:

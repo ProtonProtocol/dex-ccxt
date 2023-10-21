@@ -383,7 +383,7 @@ class protondex(Exchange, ImplicitAPI):
         priceString = self.safe_string(trade, 'price')
         orderSide = self.safe_string(trade, 'order_side')
         account = self.safe_string(trade, 'account')
-        amountString = account == self.safe_string(trade, 'bid_amount') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_amount')
+        amountString = self.safe_string(trade, 'bid_amount')
         orderId = account == self.safe_string(trade, 'bid_user_ordinal_order_id') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_user_ordinal_order_id')
         feeString = account == self.safe_string(trade, 'bid_fee') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'ask_fee')
         feeCurrencyId = account == self.safe_string(market, 'baseId') if self.safe_string(trade, 'bid_user') else self.safe_string(market, 'quoteId')
@@ -394,7 +394,7 @@ class protondex(Exchange, ImplicitAPI):
                 'cost': feeString,
                 'currency': feeCurrencyCode,
             }
-        orderCost = account == self.safe_string(trade, 'ask_amount') if self.safe_string(trade, 'bid_user') else self.safe_string(trade, 'bid_amount')
+        orderCost = self.safe_string(trade, 'ask_amount')
         return self.safe_trade({
             'info': trade,
             'id': tradeId,
@@ -631,6 +631,7 @@ class protondex(Exchange, ImplicitAPI):
     def parse_order_status(self, status):
         statuses = {
             'fulfilled': 'closed',
+            'delete': 'closed',
             'canceled': 'canceled',
             'pending': 'open',
             'open': 'open',
@@ -656,38 +657,39 @@ class protondex(Exchange, ImplicitAPI):
         #         "created_at":"2018-01-12T21:14:06.747828Z"
         #     }
         #
-        marketId = self.safe_string(order, 'market')
-        market = self.safe_market(marketId, market, '-')
         timestamp = self.parse8601(self.safe_string(order, 'block_time'))
         priceString = self.safe_string(order, 'price')
+        symbol = self.safe_string(market, 'symbol', None)
         amountString = self.safe_string(order, 'quantity_init')
         remainingString = self.safe_string(order, 'quantity_curr')
+        costString = self.safe_string(order, 'cost')
         status = self.parse_order_status(self.safe_string(order, 'status'))
         type = self.safe_string(order, 'order_type')
         if type is not None:
             parts = type.split('_')
             type = parts[0]
         side = self.safe_string(order, 'order_side')
-        currency = market.quote if (side == '2') else market.base
-        fee = {
-            'cost': self.safe_string(market, 'maker'),
-            'currency': currency,
-        }
-        market['inverse'] = True
+        if side == '1' and status == 'closed' and symbol is not None:
+            precision = self.parse_to_int(market.info.bid_token.precision)
+            amountString = float(Precise.string_div(amountString, self.safe_string(order, format('avgPrice'))), '.' + str(precision) + 'f')
+            remainingString = float(Precise.string_div(remainingString, self.safe_string(order, format('avgPrice'))), '.' + str(precision) + 'f')
+        fee = self.safe_value(order, 'fee')
         return self.safe_order({
             'id': self.safe_string(order, 'order_id'),
             'clientOrderId': self.safe_string(order, 'ordinal_order_id'),
             'datetime': self.iso8601(timestamp),
             'timestamp': timestamp,
             'status': status,
-            'symbol': market['symbol'],
+            'symbol': symbol,
             'type': type,
             'side': side,
             'price': priceString,
             'stopPrice': self.safe_string(order, 'trigger_price'),
-            'cost': None,
+            'cost': costString,
             'amount': amountString,
             'remaining': remainingString,
+            'lastTradeTimestamp': timestamp,
+            'average': self.safe_string(order, 'avgPrice'),
             'fee': fee,
         }, market)
 
@@ -710,7 +712,33 @@ class protondex(Exchange, ImplicitAPI):
         request['ordinal_order_id'] = ordinalID
         response = self.publicGetOrdersLifecycle(self.extend(request, params))
         data = self.safe_value(response, 'data', {})
-        return self.parse_order(data[0])
+        avgPrice = 0.0
+        feeCost = None
+        fee = {}
+        market = None
+        if ordinalID is not None:
+            ordinalId = self.safe_string(data[0], 'ordinal_order_id')
+            account = self.safe_string(data[0], 'account_name')
+            marketid = self.safe_string(data[0], 'market_id')
+            markets = self.fetch_markets()
+            markSymbol = None
+            for i in range(0, len(markets)):
+                if markets[i].info.market_id == marketid:
+                    markSymbol = self.safe_string(markets[i], 'symbol')
+                    market = markets[i]
+            currency = None
+            trades = self.fetch_order_trades(ordinalId, markSymbol, 1, 1, {'account': account})
+            for j in range(0, len(trades)):
+                avgPrice += self.safe_float(trades[j], 'price')
+                feeCost = Precise.string_add(feeCost, self.safe_string(trades[j]['fee'], 'cost'))
+                currency = self.safe_string(trades[j]['fee'], 'currency')
+            if len(trades) != 0:
+                avgPrice = float((avgPrice / str(len(trades))))
+            fee['cost'] = feeCost
+            fee['currency'] = currency
+        data[0]['avgPrice'] = format(avgPrice, '.8f')
+        data[0]['fee'] = fee
+        return self.parse_order(data[0], market)
 
     def fetch_order_trades(self, id: str, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
@@ -1125,8 +1153,10 @@ class protondex(Exchange, ImplicitAPI):
         askTotal = (orderAmount * math.pow(10, format(askTokenPrecision)), '.0f')
         quantity = str(bidTotal) if (orderSide == 2) else str(askTotal)
         orderPrice = Number(price) * Number(math.pow(10, format(askTokenPrecision), '.0f'))
+        marketOrder = 0
         if (orderSide == 2 and orderFillType == 1 and price == 1) or (orderSide == 1 and orderFillType == 1 and price == '9223372036854775806'):
             orderPrice = price
+            marketOrder = 1
         auth = {'actor': accountName, 'permission': 'active'}
         action1 = {
             'account': tokenContract,
@@ -1211,6 +1241,16 @@ class protondex(Exchange, ImplicitAPI):
                 orderDetails['order_side'] = orderSide
                 orderDetails['price'] = orderPrice
                 orderDetails['trigger_price'] = triggerPrice
+                if marketOrder == 1:
+                    if orderSide == 2:
+                        orderDetails['cost'] = 0
+                    orderDetails['price'] = price
+                else:
+                    if orderSide == 2:
+                        orderDetails['cost'] = ((orderAmount * orderDetails['price']) / math.pow(10, askTokenPrecision))
+                    else:
+                        orderDetails['cost'] = orderAmount
+                orderDetails['price'] = (orderDetails['price'] / math.pow(10, askTokenPrecision))
                 retries = 0
             except Exception as e:
                 if self.last_json_response:
