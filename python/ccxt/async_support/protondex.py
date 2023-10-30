@@ -464,7 +464,7 @@ class protondex(Exchange, ImplicitAPI):
         #     ]
         #
         data = self.safe_value(response, 'data', [])
-        return self.parse_trades(data, market, 1, 1, {'account': params['account']})
+        return self.parse_trades(data, market, 1, 100, {'account': params['account']})
 
     async def fetch_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
@@ -506,6 +506,28 @@ class protondex(Exchange, ImplicitAPI):
         #      }
         #
         data = self.safe_value(response, 'data', [])
+        for p in range(0, len(data)):
+            avgPrice = 0.0
+            feeCost = None
+            cost = 0.0
+            amount = 0.0
+            fee = {}
+            ordinalId = self.safe_string(data[p], 'ordinal_order_id')
+            account = self.safe_string(data[p], 'account_name')
+            currency = None
+            trades = await self.fetch_order_trades(ordinalId, symbol, 1, 1, {'account': account})
+            for j in range(0, len(trades)):
+                cost += self.safe_float(trades[j], 'cost')
+                amount += self.safe_float(trades[j], 'amount')
+                feeCost = Precise.string_add(feeCost, self.safe_string(trades[j]['fee'], 'cost'))
+                currency = self.safe_string(trades[j]['fee'], 'currency')
+            if len(trades) != 0:
+                avgPrice = float((cost / str(amount)))
+            askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
+            fee['cost'] = feeCost
+            fee['currency'] = currency
+            data[p]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
+            data[p]['fee'] = fee
         return self.parse_orders(data, market)
 
     async def fetch_trades(self, symbol: str, since: Optional[int] = None, limit: Optional[int] = None, params={}):
@@ -713,6 +735,8 @@ class protondex(Exchange, ImplicitAPI):
         response = await self.publicGetOrdersLifecycle(self.extend(request, params))
         data = self.safe_value(response, 'data', {})
         avgPrice = 0.0
+        cost = 0.0
+        amount = 0.0
         feeCost = None
         fee = {}
         market = None
@@ -729,14 +753,16 @@ class protondex(Exchange, ImplicitAPI):
             currency = None
             trades = await self.fetch_order_trades(ordinalId, markSymbol, 1, 1, {'account': account})
             for j in range(0, len(trades)):
-                avgPrice += self.safe_float(trades[j], 'price')
+                cost += self.safe_float(trades[j], 'cost')
+                amount += self.safe_float(trades[j], 'amount')
                 feeCost = Precise.string_add(feeCost, self.safe_string(trades[j]['fee'], 'cost'))
                 currency = self.safe_string(trades[j]['fee'], 'currency')
             if len(trades) != 0:
-                avgPrice = float((avgPrice / str(len(trades))))
+                avgPrice = float((cost / str(amount)))
             fee['cost'] = feeCost
             fee['currency'] = currency
-        data[0]['avgPrice'] = format(avgPrice, '.8f')
+        askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
+        data[0]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
         data[0]['fee'] = fee
         return self.parse_order(data[0], market)
 

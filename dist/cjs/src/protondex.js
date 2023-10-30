@@ -472,7 +472,7 @@ class protondex extends protondex$1 {
         //     ]
         //
         const data = this.safeValue(response, 'data', []);
-        return this.parseTrades(data, market, 1, 1, { 'account': params['account'] });
+        return this.parseTrades(data, market, 1, 100, { 'account': params['account'] });
     }
     async fetchOrders(symbol = undefined, since = undefined, limit = undefined, params = {}) {
         /**
@@ -520,6 +520,31 @@ class protondex extends protondex$1 {
         //      }
         //
         const data = this.safeValue(response, 'data', []);
+        for (let p = 0; p < data.length; p++) {
+            let avgPrice = 0.0;
+            let feeCost = undefined;
+            let cost = 0.0;
+            let amount = 0.0;
+            const fee = {};
+            const ordinalId = this.safeString(data[p], 'ordinal_order_id');
+            const account = this.safeString(data[p], 'account_name');
+            let currency = undefined;
+            const trades = await this.fetchOrderTrades(ordinalId, symbol, 1, 1, { 'account': account });
+            for (let j = 0; j < trades.length; j++) {
+                cost += this.safeFloat(trades[j], 'cost');
+                amount += this.safeFloat(trades[j], 'amount');
+                feeCost = Precise["default"].stringAdd(feeCost, this.safeString(trades[j]['fee'], 'cost'));
+                currency = this.safeString(trades[j]['fee'], 'currency');
+            }
+            if (trades.length !== 0) {
+                avgPrice = parseFloat((cost / amount).toString());
+            }
+            const askTokenPrecision = this.parseToInt(market.info.ask_token.precision);
+            fee['cost'] = feeCost;
+            fee['currency'] = currency;
+            data[p]['avgPrice'] = avgPrice.toFixed(askTokenPrecision);
+            data[p]['fee'] = fee;
+        }
         return this.parseOrders(data, market);
     }
     async fetchTrades(symbol, since = undefined, limit = undefined, params = {}) {
@@ -742,6 +767,8 @@ class protondex extends protondex$1 {
         const response = await this.publicGetOrdersLifecycle(this.extend(request, params));
         const data = this.safeValue(response, 'data', {});
         let avgPrice = 0.0;
+        let cost = 0.0;
+        let amount = 0.0;
         let feeCost = undefined;
         const fee = {};
         let market = undefined;
@@ -760,17 +787,19 @@ class protondex extends protondex$1 {
             let currency = undefined;
             const trades = await this.fetchOrderTrades(ordinalId, markSymbol, 1, 1, { 'account': account });
             for (let j = 0; j < trades.length; j++) {
-                avgPrice += this.safeFloat(trades[j], 'price');
+                cost += this.safeFloat(trades[j], 'cost');
+                amount += this.safeFloat(trades[j], 'amount');
                 feeCost = Precise["default"].stringAdd(feeCost, this.safeString(trades[j]['fee'], 'cost'));
                 currency = this.safeString(trades[j]['fee'], 'currency');
             }
             if (trades.length !== 0) {
-                avgPrice = parseFloat((avgPrice / trades.length).toString());
+                avgPrice = parseFloat((cost / amount).toString());
             }
             fee['cost'] = feeCost;
             fee['currency'] = currency;
         }
-        data[0]['avgPrice'] = avgPrice.toFixed(8);
+        const askTokenPrecision = this.parseToInt(market.info.ask_token.precision);
+        data[0]['avgPrice'] = avgPrice.toFixed(askTokenPrecision);
         data[0]['fee'] = fee;
         return this.parseOrder(data[0], market);
     }

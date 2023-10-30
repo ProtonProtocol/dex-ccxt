@@ -484,24 +484,24 @@ class protondex extends Exchange {
             //     )
             //
             $data = $this->safe_value($response, 'data', array());
-            return $this->parse_trades($data, $market, 1, 1, array( 'account' => $params['account'] ));
+            return $this->parse_trades($data, $market, 1, 100, array( 'account' => $params['account'] ));
         }) ();
     }
 
     public function fetch_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
         return Async\async(function () use ($symbol, $since, $limit, $params) {
             /**
-             * get the list of most recent trades for a particular $symbol
-             * @param {string} $symbol unified $symbol of the $market to fetch trades for
+             * get the list of most recent $trades for a particular $symbol
+             * @param {string} $symbol unified $symbol of the $market to fetch $trades for
              * @param {int|null} $since timestamp in ms of the earliest trade to fetch
-             * @param {int|null} $limit the maximum amount of trades to fetch
+             * @param {int|null} $limit the maximum $amount of $trades to fetch
              * @param {array} $params extra parameters specific to the protondex api endpoint
-             * @return {[array]} a list of ~@link https://docs.ccxt.com/en/latest/manual.html?#public-trades trade structures~
+             * @return {[array]} a list of ~@link https://docs.ccxt.com/en/latest/manual.html?#public-$trades trade structures~
              */
             Async\await($this->load_markets());
             $market = $this->market($symbol);
             if ($params['account'] === null) {
-                throw new ArgumentsRequired($this->id . ' fetchOrders() requires a account argument in params');
+                throw new ArgumentsRequired($this->id . ' fetchOrders() requires a $account argument in params');
             }
             $request = array(
                 'account' => $params['account'],
@@ -533,6 +533,31 @@ class protondex extends Exchange {
             //      }
             //
             $data = $this->safe_value($response, 'data', array());
+            for ($p = 0; $p < count($data); $p++) {
+                $avgPrice = 0.0;
+                $feeCost = null;
+                $cost = 0.0;
+                $amount = 0.0;
+                $fee = array();
+                $ordinalId = $this->safe_string($data[$p], 'ordinal_order_id');
+                $account = $this->safe_string($data[$p], 'account_name');
+                $currency = null;
+                $trades = Async\await($this->fetch_order_trades($ordinalId, $symbol, 1, 1, array( 'account' => $account )));
+                for ($j = 0; $j < count($trades); $j++) {
+                    $cost .= $this->safe_float($trades[$j], 'cost');
+                    $amount .= $this->safe_float($trades[$j], 'amount');
+                    $feeCost = Precise::string_add($feeCost, $this->safe_string($trades[$j]['fee'], 'cost'));
+                    $currency = $this->safe_string($trades[$j]['fee'], 'currency');
+                }
+                if (strlen($trades) !== 0) {
+                    $avgPrice = floatval(($cost / (string) $amount));
+                }
+                $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
+                $fee['cost'] = $feeCost;
+                $fee['currency'] = $currency;
+                $data[$p]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
+                $data[$p]['fee'] = $fee;
+            }
             return $this->parse_orders($data, $market);
         }) ();
     }
@@ -762,6 +787,8 @@ class protondex extends Exchange {
             $response = Async\await($this->publicGetOrdersLifecycle (array_merge($request, $params)));
             $data = $this->safe_value($response, 'data', array());
             $avgPrice = 0.0;
+            $cost = 0.0;
+            $amount = 0.0;
             $feeCost = null;
             $fee = array();
             $market = null;
@@ -780,17 +807,19 @@ class protondex extends Exchange {
                 $currency = null;
                 $trades = Async\await($this->fetch_order_trades($ordinalId, $markSymbol, 1, 1, array( 'account' => $account )));
                 for ($j = 0; $j < count($trades); $j++) {
-                    $avgPrice .= $this->safe_float($trades[$j], 'price');
+                    $cost .= $this->safe_float($trades[$j], 'cost');
+                    $amount .= $this->safe_float($trades[$j], 'amount');
                     $feeCost = Precise::string_add($feeCost, $this->safe_string($trades[$j]['fee'], 'cost'));
                     $currency = $this->safe_string($trades[$j]['fee'], 'currency');
                 }
                 if (strlen($trades) !== 0) {
-                    $avgPrice = floatval(($avgPrice / (string) strlen($trades)));
+                    $avgPrice = floatval(($cost / (string) $amount));
                 }
                 $fee['cost'] = $feeCost;
                 $fee['currency'] = $currency;
             }
-            $data[0]['avgPrice'] = sprintf('%.8f', $avgPrice);
+            $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
+            $data[0]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
             $data[0]['fee'] = $fee;
             return $this->parse_order($data[0], $market);
         }) ();
