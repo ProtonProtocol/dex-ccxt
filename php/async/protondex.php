@@ -43,6 +43,7 @@ class protondex extends Exchange {
                 'fetchBorrowRateHistory' => false,
                 'fetchBorrowRates' => false,
                 'fetchBorrowRatesPerSymbol' => false,
+                'fetchClosedOrders' => true,
                 'fetchCurrencies' => false,
                 'fetchDepositAddress' => false,
                 'fetchDepositAddresses' => false,
@@ -488,6 +489,77 @@ class protondex extends Exchange {
         }) ();
     }
 
+    public function fetch_closed_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
+        return Async\async(function () use ($symbol, $since, $limit, $params) {
+            /**
+             * fetches information on multiple closed orders made by the user
+             * @param {string|null} $symbol unified $market $symbol of the $market orders were made in
+             * @param {int|null} $since the earliest time in ms to fetch orders for
+             * @param {int|null} $limit the maximum number of  orde structures to retrieve
+             * @param {array} $params extra parameters specific to the proton api endpoint
+             * @param {int|null} $params->account user $account to fetch orders for
+             * @return {[array]} a list of ~@link https://docs.ccxt.com/#/?id=order-structure order structures~
+             */
+            Async\await($this->load_markets());
+            $market = $this->market($symbol);
+            if ($params['account'] === null) {
+                throw new ArgumentsRequired($this->id . ' fetchOrders() requires a $account argument in params');
+            }
+            $request = array(
+                'account' => $params['account'],
+                'symbol' => $market['symbol'],
+            );
+            $request['offset'] = ($params['offset'] !== null) ? $params['offset'] : 0;
+            $request['limit'] = ($limit !== null) ? $limit : 100;
+            $response = Async\await($this->publicGetOrdersHistory (array_merge($request, $params)));
+            //
+            //      {
+            //          "data":array(
+            //              array(
+            //                  "id":"5ec36295-5c8d-4874-8d66-2609d4938557",
+            //                  "price":"4050.06","size":"0.0044",
+            //                  "market_name":"ETH-USDT",
+            //                  "side":"sell",
+            //                  "created_at":"2021-12-07T17:47:36.811000Z"
+            //              ),
+            //          )
+            //      }
+            //
+            $data = $this->safe_value($response, 'data', array());
+            $closedOrders = array();
+            for ($p = 0; $p < count($data); $p++) {
+                if ($data[$p]['status'] === 'delete' || $data[$p]['status'] === 'cancel') {
+                    $avgPrice = 0.0;
+                    $feeCost = null;
+                    $cost = 0.0;
+                    $amount = 0.0;
+                    $fee = array();
+                    $ordinalId = $this->safe_string($data[$p], 'ordinal_order_id');
+                    $account = $this->safe_string($data[$p], 'account_name');
+                    $currency = null;
+                    $trades = Async\await($this->fetch_order_trades($ordinalId, $symbol, 1, 1, array( 'account' => $account )));
+                    for ($j = 0; $j < count($trades); $j++) {
+                        $cost .= $this->safe_float($trades[$j], 'cost');
+                        $amount .= $this->safe_float($trades[$j], 'amount');
+                        $feeCost = Precise::string_add($feeCost, $this->safe_string($trades[$j]['fee'], 'cost'));
+                        $currency = $this->safe_string($trades[$j]['fee'], 'currency');
+                    }
+                    if (strlen($trades) !== 0) {
+                        $avgPrice = floatval(($cost / (string) $amount));
+                    }
+                    $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
+                    $fee['cost'] = $feeCost;
+                    $fee['currency'] = $currency;
+                    $data[$p]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
+                    $data[$p]['fee'] = $fee;
+                    $data[$p]['cost'] = sprintf('%.' . $askTokenPrecision . 'f', $cost);
+                    $closedOrders[] = $data[$p];
+                }
+            }
+            return $this->parse_orders($closedOrders, $market);
+        }) ();
+    }
+
     public function fetch_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
         return Async\async(function () use ($symbol, $since, $limit, $params) {
             /**
@@ -557,6 +629,7 @@ class protondex extends Exchange {
                 $fee['currency'] = $currency;
                 $data[$p]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
                 $data[$p]['fee'] = $fee;
+                $data[$p]['cost'] = sprintf('%.' . $askTokenPrecision . 'f', $cost);
             }
             return $this->parse_orders($data, $market);
         }) ();
@@ -700,7 +773,7 @@ class protondex extends Exchange {
         $statuses = array(
             'fulfilled' => 'closed',
             'delete' => 'closed',
-            'canceled' => 'canceled',
+            'cancel' => 'canceled',
             'pending' => 'open',
             'open' => 'open',
             'partially_filled' => 'open',
@@ -821,6 +894,7 @@ class protondex extends Exchange {
             $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
             $data[0]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
             $data[0]['fee'] = $fee;
+            $data[0]['cost'] = sprintf('%.' . $askTokenPrecision . 'f', $cost);
             return $this->parse_order($data[0], $market);
         }) ();
     }

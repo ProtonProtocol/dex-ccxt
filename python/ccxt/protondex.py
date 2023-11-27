@@ -46,6 +46,7 @@ class protondex(Exchange, ImplicitAPI):
                 'fetchBorrowRateHistory': False,
                 'fetchBorrowRates': False,
                 'fetchBorrowRatesPerSymbol': False,
+                'fetchClosedOrders': True,
                 'fetchCurrencies': False,
                 'fetchDepositAddress': False,
                 'fetchDepositAddresses': False,
@@ -466,6 +467,69 @@ class protondex(Exchange, ImplicitAPI):
         data = self.safe_value(response, 'data', [])
         return self.parse_trades(data, market, 1, 100, {'account': params['account']})
 
+    def fetch_closed_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
+        """
+        fetches information on multiple closed orders made by the user
+        :param str|None symbol: unified market symbol of the market orders were made in
+        :param int|None since: the earliest time in ms to fetch orders for
+        :param int|None limit: the maximum number of  orde structures to retrieve
+        :param dict params: extra parameters specific to the proton api endpoint
+        :param int|None params['account']: user account to fetch orders for
+        :returns [dict]: a list of `order structures <https://docs.ccxt.com/#/?id=order-structure>`
+        """
+        self.load_markets()
+        market = self.market(symbol)
+        if params['account'] is None:
+            raise ArgumentsRequired(self.id + ' fetchOrders() requires a account argument in params')
+        request = {
+            'account': params['account'],
+            'symbol': market['symbol'],
+        }
+        request['offset'] = params['offset'] if (params['offset'] is not None) else 0
+        request['limit'] = limit if (limit is not None) else 100
+        response = self.publicGetOrdersHistory(self.extend(request, params))
+        #
+        #      {
+        #          "data":[
+        #              {
+        #                  "id":"5ec36295-5c8d-4874-8d66-2609d4938557",
+        #                  "price":"4050.06","size":"0.0044",
+        #                  "market_name":"ETH-USDT",
+        #                  "side":"sell",
+        #                  "created_at":"2021-12-07T17:47:36.811000Z"
+        #              },
+        #          ]
+        #      }
+        #
+        data = self.safe_value(response, 'data', [])
+        closedOrders = []
+        for p in range(0, len(data)):
+            if data[p]['status'] == 'delete' or data[p]['status'] == 'cancel':
+                avgPrice = 0.0
+                feeCost = None
+                cost = 0.0
+                amount = 0.0
+                fee = {}
+                ordinalId = self.safe_string(data[p], 'ordinal_order_id')
+                account = self.safe_string(data[p], 'account_name')
+                currency = None
+                trades = self.fetch_order_trades(ordinalId, symbol, 1, 1, {'account': account})
+                for j in range(0, len(trades)):
+                    cost += self.safe_float(trades[j], 'cost')
+                    amount += self.safe_float(trades[j], 'amount')
+                    feeCost = Precise.string_add(feeCost, self.safe_string(trades[j]['fee'], 'cost'))
+                    currency = self.safe_string(trades[j]['fee'], 'currency')
+                if len(trades) != 0:
+                    avgPrice = float((cost / str(amount)))
+                askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
+                fee['cost'] = feeCost
+                fee['currency'] = currency
+                data[p]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
+                data[p]['fee'] = fee
+                data[p]['cost'] = format(cost, '.' + str(askTokenPrecision) + 'f')
+                closedOrders.append(data[p])
+        return self.parse_orders(closedOrders, market)
+
     def fetch_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
         get the list of most recent trades for a particular symbol
@@ -528,6 +592,7 @@ class protondex(Exchange, ImplicitAPI):
             fee['currency'] = currency
             data[p]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
             data[p]['fee'] = fee
+            data[p]['cost'] = format(cost, '.' + str(askTokenPrecision) + 'f')
         return self.parse_orders(data, market)
 
     def fetch_trades(self, symbol: str, since: Optional[int] = None, limit: Optional[int] = None, params={}):
@@ -654,7 +719,7 @@ class protondex(Exchange, ImplicitAPI):
         statuses = {
             'fulfilled': 'closed',
             'delete': 'closed',
-            'canceled': 'canceled',
+            'cancel': 'canceled',
             'pending': 'open',
             'open': 'open',
             'partially_filled': 'open',
@@ -764,6 +829,7 @@ class protondex(Exchange, ImplicitAPI):
         askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
         data[0]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
         data[0]['fee'] = fee
+        data[0]['cost'] = format(cost, '.' + str(askTokenPrecision) + 'f')
         return self.parse_order(data[0], market)
 
     def fetch_order_trades(self, id: str, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
