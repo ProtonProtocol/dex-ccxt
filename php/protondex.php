@@ -418,6 +418,10 @@ class protondex extends Exchange {
         $result = array();
         for ($i = 0; $i < count($trades); $i++) {
             $trades[$i]['account'] = $params['account'];
+            if ($params['allMarkets']) {
+                $mSymbol = $this->safe_string($params['allMarkets'], $trades[$i]['market_id']);
+                $market = $this->market($mSymbol);
+            }
             $trade = array_merge($this->parse_trade($trades[$i], $market));
             $result[] = $trade;
         }
@@ -473,6 +477,63 @@ class protondex extends Exchange {
         return $this->parse_trades($data, $market, 1, 100, array( 'account' => $params['account'] ));
     }
 
+    public function map_id_symbol($allMarkets) {
+        $marketsmap = array();
+        for ($i = 0; $i < count($allMarkets); $i++) {
+            $marketsmap[$allMarkets[$i].info.market_id] = $this->safe_string($allMarkets[$i].info, 'symbol');
+        }
+        return $marketsmap;
+    }
+
+    public function parse_orders(array $orders, ?array $market = null, ?int $since = null, ?int $limit = null, $params = array ()) {
+        //
+        // the value of $orders is either a dict or a list
+        //
+        // dict
+        //
+        //     {
+        //         'id1' => array( ... ),
+        //         'id2' => array( ... ),
+        //         'id3' => array( ... ),
+        //         ...
+        //     }
+        //
+        // list
+        //
+        //     array(
+        //         array( 'id' => 'id1', ... ),
+        //         array( 'id' => 'id2', ... ),
+        //         array( 'id' => 'id3', ... ),
+        //         ...
+        //     )
+        //
+        $results = array();
+        if (gettype($orders) === 'array' && array_keys($orders) === array_keys(array_keys($orders))) {
+            for ($i = 0; $i < count($orders); $i++) {
+                if ($params['allMarkets']) {
+                    $mSymbol = $this->safe_string($params['allMarkets'], $orders[$i]['market_id']);
+                    $market = $this->market($mSymbol);
+                }
+                $order = $this->parse_order($orders[$i], $market);
+                $results[] = $order;
+            }
+        } else {
+            $ids = is_array($orders) ? array_keys($orders) : array();
+            for ($i = 0; $i < count($ids); $i++) {
+                $id = $ids[$i];
+                if ($params['allMarkets']) {
+                    $mSymbol = $this->safe_string($params['allMarkets'], $orders[$i]['market_id']);
+                    $market = $this->market($mSymbol);
+                }
+                $order = $this->parse_order(array_merge(array( 'id' => $id ), $orders[$id]), $market);
+                $results[] = $order;
+            }
+        }
+        $results = $this->sort_by($results, 'timestamp');
+        $symbol = ($market !== null) ? $market['symbol'] : null;
+        return $this->filter_by_symbol_since_limit($results, $symbol, $since, $limit);
+    }
+
     public function fetch_closed_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
         /**
          * fetches information on multiple closed orders made by the user
@@ -484,14 +545,20 @@ class protondex extends Exchange {
          * @return {[array]} a list of ~@link https://docs.ccxt.com/#/?id=order-structure order structures~
          */
         $this->load_markets();
-        $market = $this->market($symbol);
+        $allMarkets = $this->fetch_markets();
+        $marketIds = $this->map_id_symbol($allMarkets);
+        $market = null;
         if ($params['account'] === null) {
             throw new ArgumentsRequired($this->id . ' fetchOrders() requires a $account argument in params');
         }
         $request = array(
             'account' => $params['account'],
-            'symbol' => $market['symbol'],
+            'status' => 'delete',
         );
+        if ($symbol !== null) {
+            $market = $this->market($symbol);
+            $request['symbol'] = $market['symbol'];
+        }
         $request['offset'] = ($params['offset'] !== null) ? $params['offset'] : 0;
         $request['limit'] = ($limit !== null) ? $limit : 100;
         $response = $this->publicGetOrdersHistory (array_merge($request, $params));
@@ -520,7 +587,11 @@ class protondex extends Exchange {
                 $ordinalId = $this->safe_string($data[$p], 'ordinal_order_id');
                 $account = $this->safe_string($data[$p], 'account_name');
                 $currency = null;
-                $trades = $this->fetch_order_trades($ordinalId, $symbol, 1, 1, array( 'account' => $account ));
+                if ($symbol === null) {
+                    $symbol = $this->safe_string($marketIds, $data[$p]['market_id']);
+                    $market = $this->market($symbol);
+                }
+                $trades = $this->fetch_order_trades($ordinalId, null, 1, 1, array( 'account' => $account, 'allMarkets' => $marketIds ));
                 for ($j = 0; $j < count($trades); $j++) {
                     $cost .= $this->safe_float($trades[$j], 'cost');
                     $amount .= $this->safe_float($trades[$j], 'amount');
@@ -539,7 +610,7 @@ class protondex extends Exchange {
                 $closedOrders[] = $data[$p];
             }
         }
-        return $this->parse_orders($closedOrders, $market);
+        return $this->parse_orders($closedOrders, $market, 1, 100, array( 'allMarkets' => $marketIds ));
     }
 
     public function fetch_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
@@ -838,6 +909,7 @@ class protondex extends Exchange {
         $feeCost = null;
         $fee = array();
         $market = null;
+        $askTokenPrecision = 0;
         if ($ordinalID !== null) {
             $ordinalId = $this->safe_string($data[0], 'ordinal_order_id');
             $account = $this->safe_string($data[0], 'account_name');
@@ -863,8 +935,8 @@ class protondex extends Exchange {
             }
             $fee['cost'] = $feeCost;
             $fee['currency'] = $currency;
+            $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
         }
-        $askTokenPrecision = $this->parse_to_int($market->info.ask_token.precision);
         $data[0]['avgPrice'] = sprintf('%.' . $askTokenPrecision . 'f', $avgPrice);
         $data[0]['fee'] = $fee;
         $data[0]['cost'] = sprintf('%.' . $askTokenPrecision . 'f', $cost);
@@ -885,12 +957,15 @@ class protondex extends Exchange {
         if ($params['account'] === null) {
             throw new ArgumentsRequired($this->id . ' fetchOrderTrades() requires a account argument in params');
         }
-        $market = $this->market($symbol);
+        $market = null;
         $request = array(
             'account' => $params['account'],
-            'symbol' => $market['symbol'],
             'ordinal_order_ids' => array( $id ),
         );
+        if ($symbol !== null) {
+            $market = $this->market($symbol);
+            $request['symbol'] = $market['symbol'];
+        }
         $response = $this->publicGetTradesHistory (array_merge($request, $params));
         //
         //     array(
@@ -922,7 +997,7 @@ class protondex extends Exchange {
         //     )
         //
         $data = $this->safe_value($response, 'data', array());
-        return $this->parse_trades($data, $market, 1, 1, array( 'account' => $params['account'] ));
+        return $this->parse_trades($data, $market, 1, 1, array( 'account' => $params['account'], 'allMarkets' => $params['allMarkets'] ));
     }
 
     public function fetch_open_orders(?string $symbol = null, ?int $since = null, ?int $limit = null, $params = array ()) {
@@ -1425,7 +1500,7 @@ class protondex extends Exchange {
                 $orderDetails['price'] = ($orderDetails['price'] / pow(10, $askTokenPrecision));
                 $retries = 0;
             } catch (Exception $e) {
-                if ($this->last_json_response) {
+                if ($this->last_json_response.error.details[0]) {
                     $message = $this->safe_string($this->last_json_response.error.details[0], 'message');
                     if ($message === 'is_canonical( c ) => signature is not canonical') {
                         --$retries;
@@ -1435,6 +1510,8 @@ class protondex extends Exchange {
                         }
                         $retries = 0;
                     }
+                } else {
+                    throw $e;
                 }
                 if (!$retries) {
                     throw $e;

@@ -1,5 +1,5 @@
 import Exchange from './abstract/protondex.js';
-import { Int, Trade, OrderSide } from './base/types.js';
+import { Int, Trade, Order, OrderSide } from './base/types.js';
 export default class protondex extends Exchange {
     describe(): any;
     fetchMarkets(params?: {}): Promise<any[]>;
@@ -10,8 +10,10 @@ export default class protondex extends Exchange {
     parseTrade(trade: any, market?: any): Trade;
     parseTrades(trades: any, market?: object, since?: Int, limit?: Int, params?: {}): Trade[];
     fetchMyTrades(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<Trade[]>;
-    fetchClosedOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<import("./base/types.js").Order[]>;
-    fetchOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<import("./base/types.js").Order[]>;
+    mapIdSymbol(allMarkets: any): {};
+    parseOrders(orders: object, market?: object, since?: Int, limit?: Int, params?: {}): Order[];
+    fetchClosedOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<Order[]>;
+    fetchOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<Order[]>;
     fetchTrades(symbol: string, since?: Int, limit?: Int, params?: {}): Promise<Trade[]>;
     fetchTradingFees(params?: {}): Promise<{}>;
     parseBalance(response: any): import("./base/types.js").Balances;
@@ -24,10 +26,10 @@ export default class protondex extends Exchange {
         info: any;
     };
     parseOrderStatus(status: any): string;
-    parseOrder(order: any, market?: any): import("./base/types.js").Order;
-    fetchOrder(id: string, symbol?: string, params?: {}): Promise<import("./base/types.js").Order>;
+    parseOrder(order: any, market?: any): Order;
+    fetchOrder(id: string, symbol?: string, params?: {}): Promise<Order>;
     fetchOrderTrades(id: string, symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<Trade[]>;
-    fetchOpenOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<import("./base/types.js").Order[]>;
+    fetchOpenOrders(symbol?: string, since?: Int, limit?: Int, params?: {}): Promise<Order[]>;
     fetchDeposits(code?: any, since?: any, limit?: any, params?: {}): Promise<any>;
     fetchWithdrawals(code?: any, since?: any, limit?: any, params?: {}): Promise<any>;
     parseTransactionStatus(status: any): string;
@@ -63,7 +65,7 @@ export default class protondex extends Exchange {
     fromElliptic(ellipticSig: any): string;
     getSignatures(transHex: any): string[];
     setSandboxMode(enable: any): void;
-    createOrder(symbol: string, type: any, side: OrderSide, amount: any, price?: any, params?: {}): Promise<import("./base/types.js").Order>;
+    createOrder(symbol: string, type: any, side: OrderSide, amount: any, price?: any, params?: {}): Promise<Order>;
     cancelOrder(id: string, symbol?: string, params?: {}): Promise<any>;
     getorderIds(name: string, symbol: string): Promise<any[]>;
     cancelAllOrders(symbol?: any, params?: {}): Promise<any>;

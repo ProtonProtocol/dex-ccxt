@@ -417,6 +417,9 @@ class protondex(Exchange, ImplicitAPI):
         result = []
         for i in range(0, len(trades)):
             trades[i]['account'] = params['account']
+            if params['allMarkets']:
+                mSymbol = self.safe_string(params['allMarkets'], trades[i]['market_id'])
+                market = self.market(mSymbol)
             trade = self.extend(self.parse_trade(trades[i], market))
             result.append(trade)
         return result
@@ -467,6 +470,55 @@ class protondex(Exchange, ImplicitAPI):
         data = self.safe_value(response, 'data', [])
         return self.parse_trades(data, market, 1, 100, {'account': params['account']})
 
+    def map_id_symbol(self, allMarkets):
+        marketsmap = {}
+        for i in range(0, len(allMarkets)):
+            marketsmap[allMarkets[i].info.market_id] = self.safe_string(allMarkets[i].info, 'symbol')
+        return marketsmap
+
+    def parse_orders(self, orders: object, market: Optional[object] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
+        #
+        # the value of orders is either a dict or a list
+        #
+        # dict
+        #
+        #     {
+        #         'id1': {...},
+        #         'id2': {...},
+        #         'id3': {...},
+        #         ...
+        #     }
+        #
+        # list
+        #
+        #     [
+        #         {'id': 'id1', ...},
+        #         {'id': 'id2', ...},
+        #         {'id': 'id3', ...},
+        #         ...
+        #     ]
+        #
+        results = []
+        if isinstance(orders, list):
+            for i in range(0, len(orders)):
+                if params['allMarkets']:
+                    mSymbol = self.safe_string(params['allMarkets'], orders[i]['market_id'])
+                    market = self.market(mSymbol)
+                order = self.parse_order(orders[i], market)
+                results.append(order)
+        else:
+            ids = list(orders.keys())
+            for i in range(0, len(ids)):
+                id = ids[i]
+                if params['allMarkets']:
+                    mSymbol = self.safe_string(params['allMarkets'], orders[i]['market_id'])
+                    market = self.market(mSymbol)
+                order = self.parse_order(self.extend({'id': id}, orders[id]), market)
+                results.append(order)
+        results = self.sort_by(results, 'timestamp')
+        symbol = market['symbol'] if (market is not None) else None
+        return self.filter_by_symbol_since_limit(results, symbol, since, limit)
+
     async def fetch_closed_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
         fetches information on multiple closed orders made by the user
@@ -478,13 +530,18 @@ class protondex(Exchange, ImplicitAPI):
         :returns [dict]: a list of `order structures <https://docs.ccxt.com/#/?id=order-structure>`
         """
         await self.load_markets()
-        market = self.market(symbol)
+        allMarkets = await self.fetch_markets()
+        marketIds = self.map_id_symbol(allMarkets)
+        market = None
         if params['account'] is None:
             raise ArgumentsRequired(self.id + ' fetchOrders() requires a account argument in params')
         request = {
             'account': params['account'],
-            'symbol': market['symbol'],
+            'status': 'delete',
         }
+        if symbol != None:
+            market = self.market(symbol)
+            request['symbol'] = market['symbol']
         request['offset'] = params['offset'] if (params['offset'] is not None) else 0
         request['limit'] = limit if (limit is not None) else 100
         response = await self.publicGetOrdersHistory(self.extend(request, params))
@@ -513,7 +570,10 @@ class protondex(Exchange, ImplicitAPI):
                 ordinalId = self.safe_string(data[p], 'ordinal_order_id')
                 account = self.safe_string(data[p], 'account_name')
                 currency = None
-                trades = await self.fetch_order_trades(ordinalId, symbol, 1, 1, {'account': account})
+                if symbol == null:
+                    symbol = self.safe_string(marketIds, data[p]['market_id'])
+                    market = self.market(symbol)
+                trades = await self.fetch_order_trades(ordinalId, null, 1, 1, {'account': account, 'allMarkets': marketIds})
                 for j in range(0, len(trades)):
                     cost += self.safe_float(trades[j], 'cost')
                     amount += self.safe_float(trades[j], 'amount')
@@ -528,7 +588,7 @@ class protondex(Exchange, ImplicitAPI):
                 data[p]['fee'] = fee
                 data[p]['cost'] = format(cost, '.' + str(askTokenPrecision) + 'f')
                 closedOrders.append(data[p])
-        return self.parse_orders(closedOrders, market)
+        return self.parse_orders(closedOrders, market, 1, 100, {'allMarkets': marketIds})
 
     async def fetch_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
@@ -805,6 +865,7 @@ class protondex(Exchange, ImplicitAPI):
         feeCost = None
         fee = {}
         market = None
+        askTokenPrecision = 0
         if ordinalID is not None:
             ordinalId = self.safe_string(data[0], 'ordinal_order_id')
             account = self.safe_string(data[0], 'account_name')
@@ -826,7 +887,7 @@ class protondex(Exchange, ImplicitAPI):
                 avgPrice = float((cost / str(amount)))
             fee['cost'] = feeCost
             fee['currency'] = currency
-        askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
+            askTokenPrecision = self.parse_to_int(market.info.ask_token.precision)
         data[0]['avgPrice'] = format(avgPrice, '.' + str(askTokenPrecision) + 'f')
         data[0]['fee'] = fee
         data[0]['cost'] = format(cost, '.' + str(askTokenPrecision) + 'f')
@@ -845,12 +906,14 @@ class protondex(Exchange, ImplicitAPI):
         await self.load_markets()
         if params['account'] is None:
             raise ArgumentsRequired(self.id + ' fetchOrderTrades() requires a account argument in params')
-        market = self.market(symbol)
+        market = None
         request = {
             'account': params['account'],
-            'symbol': market['symbol'],
             'ordinal_order_ids': [id],
         }
+        if symbol != None:
+            market = self.market(symbol)
+            request['symbol'] = market['symbol']
         response = await self.publicGetTradesHistory(self.extend(request, params))
         #
         #     [
@@ -882,7 +945,7 @@ class protondex(Exchange, ImplicitAPI):
         #     ]
         #
         data = self.safe_value(response, 'data', [])
-        return self.parse_trades(data, market, 1, 1, {'account': params['account']})
+        return self.parse_trades(data, market, 1, 1, {'account': params['account'], 'allMarkets': params['allMarkets']})
 
     async def fetch_open_orders(self, symbol: Optional[str] = None, since: Optional[int] = None, limit: Optional[int] = None, params={}):
         """
@@ -1345,7 +1408,7 @@ class protondex(Exchange, ImplicitAPI):
                 orderDetails['price'] = (orderDetails['price'] / math.pow(10, askTokenPrecision))
                 retries = 0
             except Exception as e:
-                if self.last_json_response:
+                if self.last_json_response.error.details[0]:
                     message = self.safe_string(self.last_json_response.error.details[0], 'message')
                     if message == 'is_canonical( c ): signature is not canonical':
                         --retries
@@ -1353,6 +1416,8 @@ class protondex(Exchange, ImplicitAPI):
                         if message == 'assertion failure with message: overdrawn balance':
                             raise InsufficientFunds('- Add funds to the account')
                         retries = 0
+                else:
+                    raise e
                 if not retries:
                     raise e
         return self.parse_order(orderDetails, market)

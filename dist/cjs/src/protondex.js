@@ -420,6 +420,10 @@ class protondex extends protondex$1 {
         const result = [];
         for (let i = 0; i < trades.length; i++) {
             trades[i]['account'] = params['account'];
+            if (params['allMarkets']) {
+                const mSymbol = this.safeString(params['allMarkets'], trades[i]['market_id']);
+                market = this.market(mSymbol);
+            }
             const trade = this.extend(this.parseTrade(trades[i], market));
             result.push(trade);
         }
@@ -475,6 +479,62 @@ class protondex extends protondex$1 {
         const data = this.safeValue(response, 'data', []);
         return this.parseTrades(data, market, 1, 100, { 'account': params['account'] });
     }
+    mapIdSymbol(allMarkets) {
+        const marketsmap = {};
+        for (let i = 0; i < allMarkets.length; i++) {
+            marketsmap[allMarkets[i].info.market_id] = this.safeString(allMarkets[i].info, 'symbol');
+        }
+        return marketsmap;
+    }
+    parseOrders(orders, market = undefined, since = undefined, limit = undefined, params = {}) {
+        //
+        // the value of orders is either a dict or a list
+        //
+        // dict
+        //
+        //     {
+        //         'id1': { ... },
+        //         'id2': { ... },
+        //         'id3': { ... },
+        //         ...
+        //     }
+        //
+        // list
+        //
+        //     [
+        //         { 'id': 'id1', ... },
+        //         { 'id': 'id2', ... },
+        //         { 'id': 'id3', ... },
+        //         ...
+        //     ]
+        //
+        let results = [];
+        if (Array.isArray(orders)) {
+            for (let i = 0; i < orders.length; i++) {
+                if (params['allMarkets']) {
+                    const mSymbol = this.safeString(params['allMarkets'], orders[i]['market_id']);
+                    market = this.market(mSymbol);
+                }
+                const order = this.parseOrder(orders[i], market);
+                results.push(order);
+            }
+        }
+        else {
+            const ids = Object.keys(orders);
+            for (let i = 0; i < ids.length; i++) {
+                const id = ids[i];
+                if (params['allMarkets']) {
+                    const mSymbol = this.safeString(params['allMarkets'], orders[i]['market_id']);
+                    market = this.market(mSymbol);
+                }
+                const order = this.parseOrder(this.extend({ 'id': id }, orders[id]), market);
+                results.push(order);
+            }
+        }
+        results = this.sortBy(results, 'timestamp');
+        const symbol = (market !== undefined) ? market['symbol'] : undefined;
+        return this.filterBySymbolSinceLimit(results, symbol, since, limit);
+    }
     async fetchClosedOrders(symbol = undefined, since = undefined, limit = undefined, params = {}) {
         /**
          * @method
@@ -488,14 +548,20 @@ class protondex extends protondex$1 {
          * @returns {[object]} a list of [order structures]{@link https://docs.ccxt.com/#/?id=order-structure}
          */
         await this.loadMarkets();
-        const market = this.market(symbol);
+        const allMarkets = await this.fetchMarkets();
+        const marketIds = this.mapIdSymbol(allMarkets);
+        let market = undefined;
         if (params['account'] === undefined) {
             throw new errors.ArgumentsRequired(this.id + ' fetchOrders() requires a account argument in params');
         }
         const request = {
             'account': params['account'],
-            'symbol': market['symbol'],
+            'status': 'delete',
         };
+        if (symbol !== null) {
+            market = this.market(symbol);
+            request['symbol'] = market['symbol'];
+        }
         request['offset'] = (params['offset'] !== undefined) ? params['offset'] : 0;
         request['limit'] = (limit !== undefined) ? limit : 100;
         const response = await this.publicGetOrdersHistory(this.extend(request, params));
@@ -524,7 +590,11 @@ class protondex extends protondex$1 {
                 const ordinalId = this.safeString(data[p], 'ordinal_order_id');
                 const account = this.safeString(data[p], 'account_name');
                 let currency = undefined;
-                const trades = await this.fetchOrderTrades(ordinalId, symbol, 1, 1, { 'account': account });
+                if (symbol === null) {
+                    symbol = this.safeString(marketIds, data[p]['market_id']);
+                    market = this.market(symbol);
+                }
+                const trades = await this.fetchOrderTrades(ordinalId, null, 1, 1, { 'account': account, 'allMarkets': marketIds });
                 for (let j = 0; j < trades.length; j++) {
                     cost += this.safeFloat(trades[j], 'cost');
                     amount += this.safeFloat(trades[j], 'amount');
@@ -543,7 +613,7 @@ class protondex extends protondex$1 {
                 closedOrders.push(data[p]);
             }
         }
-        return this.parseOrders(closedOrders, market);
+        return this.parseOrders(closedOrders, market, 1, 100, { 'allMarkets': marketIds });
     }
     async fetchOrders(symbol = undefined, since = undefined, limit = undefined, params = {}) {
         /**
@@ -844,6 +914,7 @@ class protondex extends protondex$1 {
         let feeCost = undefined;
         const fee = {};
         let market = undefined;
+        let askTokenPrecision = 0;
         if (ordinalID !== undefined) {
             const ordinalId = this.safeString(data[0], 'ordinal_order_id');
             const account = this.safeString(data[0], 'account_name');
@@ -869,8 +940,8 @@ class protondex extends protondex$1 {
             }
             fee['cost'] = feeCost;
             fee['currency'] = currency;
+            askTokenPrecision = this.parseToInt(market.info.ask_token.precision);
         }
-        const askTokenPrecision = this.parseToInt(market.info.ask_token.precision);
         data[0]['avgPrice'] = avgPrice.toFixed(askTokenPrecision);
         data[0]['fee'] = fee;
         data[0]['cost'] = cost.toFixed(askTokenPrecision);
@@ -892,12 +963,15 @@ class protondex extends protondex$1 {
         if (params['account'] === undefined) {
             throw new errors.ArgumentsRequired(this.id + ' fetchOrderTrades() requires a account argument in params');
         }
-        const market = this.market(symbol);
+        let market = undefined;
         const request = {
             'account': params['account'],
-            'symbol': market['symbol'],
             'ordinal_order_ids': [id],
         };
+        if (symbol !== null) {
+            market = this.market(symbol);
+            request['symbol'] = market['symbol'];
+        }
         const response = await this.publicGetTradesHistory(this.extend(request, params));
         //
         //     [
@@ -929,7 +1003,7 @@ class protondex extends protondex$1 {
         //     ]
         //
         const data = this.safeValue(response, 'data', []);
-        return this.parseTrades(data, market, 1, 1, { 'account': params['account'] });
+        return this.parseTrades(data, market, 1, 1, { 'account': params['account'], 'allMarkets': params['allMarkets'] });
     }
     async fetchOpenOrders(symbol = undefined, since = undefined, limit = undefined, params = {}) {
         /**
@@ -1435,7 +1509,7 @@ class protondex extends protondex$1 {
                 retries = 0;
             }
             catch (e) {
-                if (this.last_json_response) {
+                if (this.last_json_response.error.details[0]) {
                     const message = this.safeString(this.last_json_response.error.details[0], 'message');
                     if (message === 'is_canonical( c ): signature is not canonical') {
                         --retries;
@@ -1446,6 +1520,9 @@ class protondex extends protondex$1 {
                         }
                         retries = 0;
                     }
+                }
+                else {
+                    throw e;
                 }
                 if (!retries) {
                     throw e;
