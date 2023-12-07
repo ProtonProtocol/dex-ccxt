@@ -9,6 +9,7 @@ use Exception; // a common import
 use ccxt\async\abstract\protondex as Exchange;
 use ccxt\ExchangeError;
 use ccxt\ArgumentsRequired;
+use ccxt\BadRequest;
 use ccxt\InsufficientFunds;
 use ccxt\OrderNotFound;
 use ccxt\Precise;
@@ -1541,7 +1542,10 @@ class protondex extends Exchange {
                     $orderDetails['price'] = ($orderDetails['price'] / pow(10, $askTokenPrecision));
                     $retries = 0;
                 } catch (Exception $e) {
-                    if ($this->last_json_response.error.details[0]) {
+                    if ($this->last_json_response) {
+                        if (json_encode ($this->last_json_response.error) === '{}' || json_encode ($this->last_json_response.error.details) === '{}') {
+                            throw $$this->last_json_response;
+                        }
                         $message = $this->safe_string($this->last_json_response.error.details[0], 'message');
                         if ($message === 'is_canonical( c ) => signature is not canonical') {
                             --$retries;
@@ -1549,10 +1553,10 @@ class protondex extends Exchange {
                             if ($message === 'assertion failure with $message => overdrawn balance') {
                                 throw new InsufficientFunds('- Add funds to the account');
                             }
-                            $retries = 0;
+                            throw new BadRequest($message);
                         }
                     } else {
-                        throw $e;
+                        $retries = 0;
                     }
                     if (!$retries) {
                         throw $e;

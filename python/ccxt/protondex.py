@@ -7,10 +7,12 @@ from ccxt.base.exchange import Exchange
 from ccxt.abstract.protondex import ImplicitAPI
 import hashlib
 import math
+import json
 from ccxt.base.types import OrderSide
 from typing import Optional
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import ArgumentsRequired
+from ccxt.base.errors import BadRequest
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.decimal_to_precision import TICK_SIZE
@@ -1408,16 +1410,18 @@ class protondex(Exchange, ImplicitAPI):
                 orderDetails['price'] = (orderDetails['price'] / math.pow(10, askTokenPrecision))
                 retries = 0
             except Exception as e:
-                if self.last_json_response.error.details[0]:
+                if self.last_json_response:
+                    if json.dumps(self.last_json_response.error) == '{}' or json.dumps(self.last_json_response.error.details) == '{}':
+                        raise self.last_json_response
                     message = self.safe_string(self.last_json_response.error.details[0], 'message')
                     if message == 'is_canonical( c ): signature is not canonical':
                         --retries
                     else:
                         if message == 'assertion failure with message: overdrawn balance':
                             raise InsufficientFunds('- Add funds to the account')
-                        retries = 0
+                        raise BadRequest(message)
                 else:
-                    raise e
+                    retries = 0
                 if not retries:
                     raise e
         return self.parse_order(orderDetails, market)

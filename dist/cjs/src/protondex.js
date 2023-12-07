@@ -1509,7 +1509,10 @@ class protondex extends protondex$1 {
                 retries = 0;
             }
             catch (e) {
-                if (this.last_json_response.error.details[0]) {
+                if (this.last_json_response) {
+                    if (JSON.stringify(this.last_json_response.error) === '{}' || JSON.stringify(this.last_json_response.error.details) === '{}') {
+                        throw this.last_json_response;
+                    }
                     const message = this.safeString(this.last_json_response.error.details[0], 'message');
                     if (message === 'is_canonical( c ): signature is not canonical') {
                         --retries;
@@ -1518,11 +1521,11 @@ class protondex extends protondex$1 {
                         if (message === 'assertion failure with message: overdrawn balance') {
                             throw new errors.InsufficientFunds('- Add funds to the account');
                         }
-                        retries = 0;
+                        throw new errors.BadRequest(message);
                     }
                 }
                 else {
-                    throw e;
+                    retries = 0;
                 }
                 if (!retries) {
                     throw e;
