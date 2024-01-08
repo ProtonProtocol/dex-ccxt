@@ -1,6 +1,6 @@
 {
   "name": "@proton/ccxt",
-  "version": "3.1.71",
+  "version": "3.1.73",
   "description": "A JavaScript / TypeScript / Python / C# / PHP cryptocurrency trading library with support for 130+ exchanges",
   "unpkg": "dist/ccxt.browser.js",
   "type": "module",

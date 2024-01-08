@@ -884,10 +884,23 @@ class protondex extends Exchange {
             $type = $parts[0];
         }
         $side = $this->safe_string($order, 'order_side');
+        $filled = null;
         if ($side === '1' && $status === 'closed' && $symbol !== null) {
-            $precision = $this->parse_to_int($market->info.bid_token.precision);
-            $amountString = floatval(Precise::string_div($amountString, $this->safe_string($order, sprintf('%.' . $precision . 'f', 'avgPrice'))));
-            $remainingString = floatval(Precise::string_div($remainingString, $this->safe_string($order, sprintf('%.' . $precision . 'f', 'avgPrice'))));
+            $amountString = floatval(Precise::string_div($amountString, $this->safe_string($order, sprintf('%.' . $market->info.bid_token.precision . 'f', 'avgPrice'))));
+            $remainingString = floatval(Precise::string_div($remainingString, $this->safe_string($order, sprintf('%.' . $market->info.bid_token.precision . 'f', 'avgPrice'))));
+        } elseif ($status === 'canceled') {
+            if ($order['quantity_init'] === $order['quantity_change']) {
+                $filled = '0';
+            } else {
+                $remainingString = $this->safe_string($order, 'quantity_change');
+                $filled = ($order['quantity_init'] - (string) $order['quantity_change']);
+                if ($side === '1' && $symbol !== null) {
+                    $costString = ($order['quantity_init'] - sprintf('%.' . $market->info.ask_token.precision . 'f', $order['quantity_change']));
+                    $amountString = floatval(Precise::string_div($this->safe_string($order, 'quantity_init'), $this->safe_string($order, sprintf('%.' . $market->info.bid_token.precision . 'f', 'avgPrice'))));
+                    $remainingString = floatval(Precise::string_div($remainingString, $this->safe_string($order, sprintf('%.' . $market->info.bid_token.precision . 'f', 'avgPrice'))));
+                    $filled = floatval(Precise::string_div($filled, $this->safe_string($order, sprintf('%.' . $market->info.bid_token.precision . 'f', 'avgPrice'))));
+                }
+            }
         }
         $fee = $this->safe_value($order, 'fee');
         return $this->safe_order(array(
@@ -907,6 +920,7 @@ class protondex extends Exchange {
             'lastTradeTimestamp' => $timestamp,
             'average' => $this->safe_string($order, 'avgPrice'),
             'fee' => $fee,
+            'filled' => $filled,
         ), $market);
     }
 

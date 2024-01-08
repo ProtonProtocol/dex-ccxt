@@ -818,10 +818,21 @@ class protondex(Exchange, ImplicitAPI):
             parts = type.split('_')
             type = parts[0]
         side = self.safe_string(order, 'order_side')
+        filled = None
         if side == '1' and status == 'closed' and symbol is not None:
-            precision = self.parse_to_int(market.info.bid_token.precision)
-            amountString = float(Precise.string_div(amountString, self.safe_string(order, format('avgPrice'))), '.' + str(precision) + 'f')
-            remainingString = float(Precise.string_div(remainingString, self.safe_string(order, format('avgPrice'))), '.' + str(precision) + 'f')
+            amountString = float(Precise.string_div(amountString, self.safe_string(order, format('avgPrice'))), '.' + str(market.info.bid_token.precision) + 'f')
+            remainingString = float(Precise.string_div(remainingString, self.safe_string(order, format('avgPrice'))), '.' + str(market.info.bid_token.precision) + 'f')
+        elif status == 'canceled':
+            if order['quantity_init'] == order['quantity_change']:
+                filled = '0'
+            else:
+                remainingString = self.safe_string(order, 'quantity_change')
+                filled = (order['quantity_init'] - str(order['quantity_change']))
+                if side == '1' and symbol is not None:
+                    costString = (order['quantity_init'] - format(order['quantity_change']), '.' + str(market.info.ask_token.precision) + 'f')
+                    amountString = float(Precise.string_div(self.safe_string(order, 'quantity_init'), self.safe_string(order, format('avgPrice'))), '.' + str(market.info.bid_token.precision) + 'f')
+                    remainingString = float(Precise.string_div(remainingString, self.safe_string(order, format('avgPrice'))), '.' + str(market.info.bid_token.precision) + 'f')
+                    filled = float(Precise.string_div(filled, self.safe_string(order, format('avgPrice'))), '.' + str(market.info.bid_token.precision) + 'f')
         fee = self.safe_value(order, 'fee')
         return self.safe_order({
             'id': self.safe_string(order, 'order_id'),
@@ -840,6 +851,7 @@ class protondex(Exchange, ImplicitAPI):
             'lastTradeTimestamp': timestamp,
             'average': self.safe_string(order, 'avgPrice'),
             'fee': fee,
+            'filled': filled,
         }, market)
 
     def fetch_order(self, id: str, symbol: Optional[str] = None, params={}):
